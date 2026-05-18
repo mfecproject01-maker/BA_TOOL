@@ -1608,53 +1608,96 @@ function showTableSelectorModal(fmt) {
 
   document.getElementById('tblSelOverlay')?.remove();
 
-  let active  = [...allKeys];
-  let removed = [];
+  // state
+  let selected = new Set(allKeys);
+  let query    = '';
+
+  // group tables by prefix (e.g. "hr", "inv") — split at first uppercase or underscore
+  function getPrefix(name) {
+    const m = name.match(/^([a-z]+)/i);
+    return m ? m[1].toLowerCase() : name[0].toLowerCase();
+  }
+  const groups = {};
+  allKeys.forEach(k => {
+    const p = getPrefix(k);
+    (groups[p] = groups[p] || []).push(k);
+  });
+  const groupKeys = Object.keys(groups).sort();
+
+  function filteredKeys() {
+    const q = query.trim().toLowerCase();
+    return q ? allKeys.filter(k => k.toLowerCase().includes(q)) : allKeys;
+  }
 
   function render(overlay) {
-    const grid    = overlay.querySelector('.tsel-chip-grid');
-    const rgrid   = overlay.querySelector('.tsel-removed-grid');
-    const rlabel  = overlay.querySelector('.tsel-removed-label');
+    const body   = overlay.querySelector('.tsel-body');
     const counter = overlay.querySelector('.tsel-counter');
     const btnExp  = overlay.querySelector('.tsel-btn-export');
+    const visible = filteredKeys();
+    const selectedVisible = visible.filter(k => selected.has(k)).length;
 
-    grid.innerHTML = active.length === 0
-      ? '<span class="tsel-empty">ไม่มี table ที่เลือก</span>'
-      : active.map(k => {
-          const isDup = currentData[k]?.isDuplicate;
-          return `<div class="tsel-chip${isDup ? ' is-dup' : ''}">
-            ${isDup ? '<span class="tsel-dup-badge">DUP</span>' : ''}
-            <span class="tsel-chip-name">${k}</span>
-            <button class="tsel-chip-remove" data-key="${k}">✕</button>
-          </div>`;
-        }).join('');
+    counter.innerHTML = `<span class="tsel-count-num">${selected.size}</span> / ${allKeys.length} tables selected`;
+    btnExp.disabled   = selected.size === 0;
 
-    rgrid.innerHTML = removed.map(k =>
-      `<div class="tsel-removed-chip">
-        <span>${k}</span>
-        <button class="tsel-restore-btn" data-key="${k}">↩</button>
-      </div>`
-    ).join('');
-    rlabel.style.display = removed.length ? '' : 'none';
-    counter.textContent  = `เลือก ${active.length} / ${allKeys.length} tables`;
-    btnExp.disabled      = active.length === 0;
+    // progress bar
+    const pct = allKeys.length ? Math.round(selected.size / allKeys.length * 100) : 0;
+    overlay.querySelector('.tsel-progress-fill').style.width = pct + '%';
 
-    grid.querySelectorAll('.tsel-chip-remove').forEach(btn => {
-      btn.onclick = () => {
-        const k = btn.dataset.key;
-        active = active.filter(x => x !== k);
-        removed = [k, ...removed];
+    if (query.trim()) {
+      // flat search result view
+      body.innerHTML = visible.length === 0
+        ? `<div class="tsel-no-result">ไม่พบ table ที่ตรงกับ "<b>${query}</b>"</div>`
+        : `<div class="tsel-flat-grid">${visible.map(k => chipHTML(k)).join('')}</div>`;
+    } else {
+      // grouped view
+      body.innerHTML = groupKeys.map(prefix => {
+        const keys = groups[prefix];
+        const allSel = keys.every(k => selected.has(k));
+        const noneSel = keys.every(k => !selected.has(k));
+        const partial = !allSel && !noneSel;
+        return `<div class="tsel-group" data-prefix="${prefix}">
+          <div class="tsel-group-header">
+            <button class="tsel-group-toggle ${allSel ? 'all' : noneSel ? 'none' : 'partial'}" data-prefix="${prefix}" title="${allSel ? 'ยกเลิกทั้งกลุ่ม' : 'เลือกทั้งกลุ่ม'}">
+              <span class="tsel-group-check">${allSel ? '✓' : partial ? '−' : ''}</span>
+            </button>
+            <span class="tsel-group-name">${prefix}</span>
+            <span class="tsel-group-count">${keys.filter(k => selected.has(k)).length} / ${keys.length}</span>
+          </div>
+          <div class="tsel-group-chips">${keys.map(k => chipHTML(k)).join('')}</div>
+        </div>`;
+      }).join('');
+    }
+
+    // bind chip toggles
+    body.querySelectorAll('.tsel-chip2').forEach(chip => {
+      chip.onclick = () => {
+        const k = chip.dataset.key;
+        selected.has(k) ? selected.delete(k) : selected.add(k);
         render(overlay);
       };
     });
-    rgrid.querySelectorAll('.tsel-restore-btn').forEach(btn => {
-      btn.onclick = () => {
-        const k = btn.dataset.key;
-        removed = removed.filter(x => x !== k);
-        active = allKeys.filter(x => x === k || active.includes(x));
+
+    // bind group toggles
+    body.querySelectorAll('.tsel-group-toggle').forEach(btn => {
+      btn.onclick = (e) => {
+        e.stopPropagation();
+        const prefix = btn.dataset.prefix;
+        const keys   = groups[prefix];
+        const allSel = keys.every(k => selected.has(k));
+        allSel ? keys.forEach(k => selected.delete(k)) : keys.forEach(k => selected.add(k));
         render(overlay);
       };
     });
+  }
+
+  function chipHTML(k) {
+    const on  = selected.has(k);
+    const dup = currentData[k]?.isDuplicate;
+    return `<button class="tsel-chip2${on ? ' on' : ''}${dup ? ' dup' : ''}" data-key="${k}">
+      ${dup ? '<span class="tsel-dup-badge">DUP</span>' : ''}
+      <span class="tsel-chip2-name">${k}</span>
+      <span class="tsel-chip2-check">${on ? '✓' : ''}</span>
+    </button>`;
   }
 
   const overlay = document.createElement('div');
@@ -1663,18 +1706,21 @@ function showTableSelectorModal(fmt) {
   overlay.innerHTML = `
     <div class="tsel-modal">
       <div class="tsel-modal-header">
-        <div>
-          <div class="tsel-modal-title">เลือก Table ที่ต้องการ Export</div>
-          <div class="tsel-counter"></div>
+        <div class="tsel-modal-title">Export ${fmt.toUpperCase()}</div>
+        <div class="tsel-counter"></div>
+      </div>
+      <div class="tsel-progress-bar"><div class="tsel-progress-fill"></div></div>
+      <div class="tsel-toolbar">
+        <div class="tsel-search-wrap">
+          <span class="tsel-search-icon">⌕</span>
+          <input class="tsel-search" placeholder="ค้นหา table..." autocomplete="off" spellcheck="false" />
         </div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <button class="tsel-btn-all" id="tselBtnAll">Restore ทั้งหมด</button>
-          <button class="tsel-btn-all" id="tselBtnNone">ลบทั้งหมด</button>
+        <div class="tsel-toolbar-btns">
+          <button class="tsel-btn-all" id="tselBtnAll">เลือกทั้งหมด</button>
+          <button class="tsel-btn-all" id="tselBtnNone">ยกเลิกทั้งหมด</button>
         </div>
       </div>
-      <div class="tsel-chip-grid"></div>
-      <div class="tsel-removed-label" style="display:none">ถูกนำออก</div>
-      <div class="tsel-removed-grid"></div>
+      <div class="tsel-body"></div>
       <div class="tsel-modal-footer">
         <button class="tsel-btn-cancel">ยกเลิก</button>
         <button class="tsel-btn-export">Export ${fmt.toUpperCase()}</button>
@@ -1684,10 +1730,22 @@ function showTableSelectorModal(fmt) {
   document.body.appendChild(overlay);
   render(overlay);
 
-  overlay.querySelector('#tselBtnAll').onclick  = () => { active = [...allKeys]; removed = []; render(overlay); };
-  overlay.querySelector('#tselBtnNone').onclick = () => { removed = [...allKeys]; active = []; render(overlay); };
-  overlay.querySelector('.tsel-btn-cancel').onclick  = () => overlay.remove();
-  overlay.querySelector('.tsel-btn-export').onclick  = () => { overlay.remove(); doExportSelected(fmt, active); };
+  // search
+  overlay.querySelector('.tsel-search').oninput = (e) => {
+    query = e.target.value;
+    render(overlay);
+  };
+
+  overlay.querySelector('#tselBtnAll').onclick  = () => { selected = new Set(allKeys); render(overlay); };
+  overlay.querySelector('#tselBtnNone').onclick = () => { selected = new Set(); render(overlay); };
+  overlay.querySelector('.tsel-btn-cancel').onclick = () => overlay.remove();
+  overlay.querySelector('.tsel-btn-export').onclick = () => { overlay.remove(); doExportSelected(fmt, [...selected]); };
+
+  // close on backdrop click
+  overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+  // focus search
+  setTimeout(() => overlay.querySelector('.tsel-search')?.focus(), 50);
 }
 
 async function doExportSelected(fmt, selectedKeys) {
