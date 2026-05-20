@@ -1,0 +1,117 @@
+/**
+ * presence.js  —  User-side WebSocket tracker
+ * Drop <script src="presence.js"></script> on every page the user visits.
+ * Works for both logged-in users and guests.
+ */
+
+(function () {
+  'use strict';
+
+  const ADMIN_BACKEND = 'localhost:8000';  // ← เปลี่ยนเป็น Render URL ตอน deploy
+  const WS_URL = (location.protocol === 'https:' ? 'wss' : 'ws') +
+    '://' + ADMIN_BACKEND + '/ws/presence';
+
+  const PING_INTERVAL = 25_000;   // ms — must be < HEARTBEAT_INTERVAL on server
+  const RECONNECT_DELAY = 5_000;
+
+  let ws = null;
+  let pingTimer = null;
+  let reconnectTimer = null;
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
+
+  function getUserId() {
+    // Adjust to however your app stores the logged-in user id
+    try {
+      const session = JSON.parse(
+        localStorage.getItem('ba_session') || sessionStorage.getItem('ba_session') || 'null'
+      );
+      return session?.user_id ?? session?.id ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  function buildPayload() {
+    return {
+      event:      'user_online',
+      user_id:    getUserId(),
+      page:       location.pathname + location.search,
+      user_agent: navigator.userAgent,
+      timestamp:  new Date().toISOString(),
+    };
+  }
+
+  // ── Connection ────────────────────────────────────────────────────────────
+
+  function connect() {
+    clearTimeout(reconnectTimer);
+    if (ws && ws.readyState < 2) return; // already open / connecting
+
+    ws = new WebSocket(WS_URL);
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify(buildPayload()));
+      startPing();
+    };
+
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.event === 'pong') return; // heartbeat ack
+      } catch { /* ignore */ }
+    };
+
+    ws.onclose = () => {
+      stopPing();
+      reconnectTimer = setTimeout(connect, RECONNECT_DELAY);
+    };
+
+    ws.onerror = () => ws.close();
+  }
+
+  function startPing() {
+    stopPing();
+    pingTimer = setInterval(() => {
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ event: 'ping' }));
+      }
+    }, PING_INTERVAL);
+  }
+
+  function stopPing() {
+    clearInterval(pingTimer);
+  }
+
+  // ── Page change tracking (SPA support) ───────────────────────────────────
+
+  function notifyPageChange() {
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        event: 'page_change',
+        page:  location.pathname + location.search,
+      }));
+    }
+  }
+
+  // Intercept pushState / replaceState for SPA navigation
+  ['pushState', 'replaceState'].forEach(method => {
+    const orig = history[method];
+    history[method] = function (...args) {
+      orig.apply(this, args);
+      notifyPageChange();
+    };
+  });
+  window.addEventListener('popstate', notifyPageChange);
+
+  // ── Cleanup on tab close ─────────────────────────────────────────────────
+
+  window.addEventListener('beforeunload', () => {
+    stopPing();
+    ws?.close();
+  });
+
+  // ── Boot ──────────────────────────────────────────────────────────────────
+
+  connect();
+})();
