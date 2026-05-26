@@ -548,6 +548,9 @@
                     <span class="status-dot"></span>
                     API Online
                 </div>
+                <button id="adminConsoleBtn" class="lock-btn" onclick="openAdminConsole()" style="margin-left: 8px;" title="Open Admin Console">
+                    <i class="fas fa-user-shield"></i> Admin Console
+                </button>
             </div>
         </div>
 
@@ -660,6 +663,7 @@
         const previewArea = document.querySelector('.preview-area');
         
         let isMaintaining = false;
+        let adminConsoleWindow = null;
 
         // Function to disable/enable all elements
         function toggleElements(disabled) {
@@ -673,6 +677,33 @@
             destSelect.disabled = disabled;
             destInput.disabled = disabled;
             convertBtn.disabled = disabled;
+        }
+
+        // Function to open Admin Console
+        function openAdminConsole() {
+            // Check if the window already exists and is still open
+            if (adminConsoleWindow && !adminConsoleWindow.closed) {
+                adminConsoleWindow.focus();
+            } else {
+                // Open new window with admin console
+                const width = 1200;
+                const height = 800;
+                const left = (screen.width - width) / 2;
+                const top = (screen.height - height) / 2;
+                
+                adminConsoleWindow = window.open(
+                    'admin-console.html',
+                    'AdminConsole',
+                    `width=${width},height=${height},left=${left},top=${top},resizable=yes,scrollbars=yes`
+                );
+                
+                if (!adminConsoleWindow) {
+                    alert('Unable to open Admin Console. Please check if pop-ups are blocked.');
+                } else {
+                    // Set reference back to this window
+                    adminConsoleWindow.converterWindow = window;
+                }
+            }
         }
 
         // Function to start maintain mode (called from Admin Console)
