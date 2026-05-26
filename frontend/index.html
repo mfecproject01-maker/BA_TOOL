@@ -43,6 +43,378 @@
     <span class="backend-label" id="backendLabel">กำลังเชื่อมต่อ...</span>
   </div>
 
+  <!-- Admin Console Button -->
+  <a class="admin-console-btn" href="https://ba-tool-admin.onrender.com" target="_blank" title="Admin Console">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+      <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+    </svg>
+    Admin Console
+  </a>
+
+  <!-- Theme Toggle -->
+  <div class="theme-toggle">
+    <button class="theme-toggle-btn active" id="btnDark"  onclick="setTheme('dark')"  title="Dark mode">🌙</button>
+    <button class="theme-toggle-btn"        id="btnLight" onclick="setTheme('light')" title="Light mode">☀️</button>
+  </div>
+
+  <div class="topbar-badge">
+    <span class="badge" id="badgeTables">0 tables</span>
+    <span class="badge" id="badgeRows">0 rows</span>
+    <span class="badge" id="badgeStatus">ready</span>
+  </div>
+</div>
+
+<!-- WORKSPACE -->
+<div class="workspace">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+
+    <!-- Upload -->
+    <div class="card">
+      <div class="card-header">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="color:var(--text3)">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17,8 12,3 7,8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <span class="card-title">Upload Files</span>
+      </div>
+      <div class="card-body">
+        <div class="dropzone" id="dropzone"
+          onclick="document.getElementById('fileInput').click()"
+          ondragover="onDragOver(event)"
+          ondragleave="onDragLeave(event)"
+          ondrop="onDrop(event)">
+          <span class="dropzone-icon">📂</span>
+          <div class="dropzone-label">คลิกหรือลากไฟล์มาที่นี่</div>
+          <div class="dropzone-hint">.csv · .xlsx · .sql</div>
+        </div>
+        <input type="file" id="fileInput" accept=".csv,.xlsx,.sql" multiple>
+        <div class="file-list" id="fileList"></div>
+        <div class="status-bar" id="uploadStatus"></div>
+      </div>
+    </div>
+
+    <!-- Database Selection -->
+    <div class="card database-card">
+      <div class="card-header">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="color:var(--text3)">
+          <circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/><path d="M12 5v14"/>
+        </svg>
+        <span class="card-title">Database Configuration</span>
+      </div>
+      <div class="card-body">
+        <!-- Source Database -->
+        <div class="db-section">
+          <label class="db-label">
+            <span class="db-label-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 3v10"/><path d="m8 9 4 4 4-4"/><path d="M5 14v5h14v-5"/>
+              </svg>
+            </span>
+            Source Database
+          </label>
+          <div class="db-selector">
+            <select id="sourceDbSelect" class="form-select" onchange="onSourceDbChange()">
+              <option value="">-- Select Source --</option>
+            </select>
+            <span class="db-type" id="sourceDbType">—</span>
+          </div>
+          <div class="db-info" id="sourceDbInfo"></div>
+        </div>
+
+        <!-- Separator -->
+        <div class="db-separator" aria-hidden="true">
+          <span></span>
+        </div>
+
+        <!-- Destination Database -->
+        <div class="db-section">
+          <label class="db-label">
+            <span class="db-label-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 21V11"/><path d="m8 15 4-4 4 4"/><path d="M5 10V5h14v5"/>
+              </svg>
+            </span>
+            Destination Database
+          </label>
+          <div class="db-selector">
+            <select id="destDbSelect" class="form-select" onchange="onDestDbChange()">
+              <option value="">-- Select Destination --</option>
+            </select>
+            <span class="db-type" id="destDbType">—</span>
+          </div>
+          <div class="db-info" id="destDbInfo"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Convert Button Card -->
+    <div class="card">
+      <div class="card-body" style="padding:14px;">
+        <button class="btn-convert" id="convertBtn" onclick="convertData()" disabled>
+          <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+            <polyline points="23 4 23 10 17 10"/>
+            <polyline points="1 20 1 14 7 14"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
+          Convert &amp; Proceed
+        </button>
+        <div class="status-bar" id="convertStatus" style="margin-top:10px;"></div>
+      </div>
+    </div>
+
+    <!-- Session Panel (visible after convert) -->
+    <div class="card" id="sessionCard" style="display:none">
+      <div class="card-header">
+        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="color:var(--text3)">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="8" x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+        <span class="card-title">Session</span>
+      </div>
+      <div class="card-body" style="display:flex;flex-direction:column;gap:8px;">
+        <div class="session-id-box">
+          <span class="session-id-label">Session ID</span>
+          <code class="session-id-val" id="sessionIdDisplay">—</code>
+        </div>
+        <div style="display:flex;gap:8px;">
+          <button class="btn-session refresh" onclick="fetchResult()">
+            🔄 Refresh Result
+          </button>
+          <button class="btn-session danger"   onclick="handleDeleteSession()">
+            🗑 Delete
+          </button>
+        </div>
+      </div>
+    </div>
+
+
+    <!-- Processing Logs Console -->
+    <div class="card logs-card" id="logsPanelCard">
+      <div class="logs-card-header">
+        <div class="logs-title-wrap">
+          <span class="logs-icon" aria-hidden="true">
+            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <polyline points="4 17 10 11 4 5"/>
+              <line x1="12" y1="19" x2="20" y2="19"/>
+            </svg>
+          </span>
+          <div>
+            <span class="card-title logs-title">Processing Logs Console</span>
+            <div class="logs-subtitle">FastAPI live stream</div>
+          </div>
+        </div>
+        <div class="logs-header-actions">
+          <span class="logs-status-badge connected" id="logsStatusBadge">CONNECTED</span>
+          <button class="logs-collapse-btn" id="logsCollapseBtn" type="button" onclick="toggleLogsPanel()" title="Collapse logs">
+            <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+              <polyline points="18 15 12 9 6 15"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="logs-panel-body" id="logsPanelBody">
+        <div class="logs-toolbar">
+          <input class="logs-search" id="logsSearchInput" type="search" placeholder="Search logs" autocomplete="off">
+          <select class="logs-level-filter" id="logsLevelFilter" aria-label="Filter logs by level">
+            <option value="ALL">All Levels</option>
+            <option value="INFO">INFO</option>
+            <option value="SUCCESS">SUCCESS</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+          </select>
+          <button class="logs-tool-btn danger" type="button" onclick="clearProcessingLogs()">Clear</button>
+          <button class="logs-tool-btn" type="button" onclick="downloadProcessingLogs()">Download .txt</button>
+        </div>
+
+        <div class="logs-counters" aria-label="Log counters">
+          <span><b id="logCountAll">0</b> total</span>
+          <span class="info"><b id="logCountInfo">0</b> info</span>
+          <span class="success"><b id="logCountSuccess">0</b> success</span>
+          <span class="warning"><b id="logCountWarning">0</b> warning</span>
+          <span class="error"><b id="logCountError">0</b> error</span>
+        </div>
+
+        <div class="logs-console" id="logsConsole" role="log" aria-live="polite" aria-label="Processing logs">
+          <div class="logs-empty" id="logsEmptyState">Waiting for backend logs...</div>
+        </div>
+        
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <div class="main-content">
+
+    <!-- Stats -->
+    <div class="stats-row">
+      <div class="stat-card">
+        <div class="stat-label">Files Loaded</div>
+        <div class="stat-value accent" id="statFiles">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Tables Found</div>
+        <div class="stat-value" id="statTables">0</div>
+      </div>
+    </div>
+
+    <!-- Bulk Download -->
+    <div class="bulk-section" id="bulkSection">
+      <div class="bulk-header">
+        <span class="bulk-title">⬇ Download All Tables</span>
+        <div class="bulk-btns">
+          <button class="btn-dl csv" onclick="downloadAllCSV()">
+            <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7,10 12,15 17,10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            All CSV
+          </button>
+          <button class="btn-dl xlsx" onclick="downloadAllXLSX()">
+            <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <polyline points="7,10 12,15 17,10"/>
+              <line x1="12" y1="15" x2="12" y2="3"/>
+            </svg>
+            All XLSX
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tables -->
+    <div class="tables-grid" id="tablesGrid">
+      <div class="empty-state">
+        <div class="empty-state-icon">🗄️</div>
+        <div class="empty-state-text">อัปโหลดไฟล์ CSV, Excel หรือ SQL เพื่อเริ่มต้น</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- REFERENCES FAB -->
+<button class="ref-fab" id="refFab" onclick="toggleReferences()" title="REFERENCES & VERSION SUPPORT">
+  <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+    <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+    <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+  </svg>
+  <span>REFERENCES & VERSION SUPPORT</span>
+  <span class="ref-fab-badge" id="refFabBadge">0</span>
+  <svg class="ref-chevron" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+    <polyline points="18 15 12 9 6 15"/>
+  </svg>
+</button>
+
+<!-- REFERENCES DRAWER -->
+<div class="ref-panel" id="refPanel">
+  <div class="ref-header">
+    <svg class="ref-header-icon" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+      <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+      <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+    </svg>
+    <span class="ref-header-title" id="refHeaderTitle">Database Compatibility Documentation</span>
+    <span class="ref-header-sub" id="refHeaderSub">Loading...</span>
+    <div class="ref-tabs">
+      <button class="ref-tab active" id="tabRefs" onclick="switchRefTab('refs')">References</button>
+      <button class="ref-tab" id="tabVersion" onclick="switchRefTab('version')">Version Support</button>
+    </div>
+    <button class="ref-close-btn" onclick="toggleReferences()">&times;</button>
+  </div>
+
+  <div class="ref-tab-pane active" id="paneRefs">
+    <div class="ref-dynamic-state" id="refDynamicState">
+      <div class="ref-loading-spinner"></div>
+      <div>Loading database support documentation...</div>
+    </div>
+    <div class="ref-body dynamic" id="refBody"></div>
+  </div>
+
+  <div class="ref-tab-pane" id="paneVersion">
+    <div class="ver-body dynamic" id="versionSupportBody"></div>
+  </div>
+</div><!-- /ref-panel -->
+
+<script src="script.js"></script>
+<script src="/presence-user.js"></script>
+
+<!-- ══ MAINTENANCE MODE OVERLAY ══════════════════════════════════════════════ -->
+<div id="maintenanceOverlay" style="display:none;position:fixed;inset:0;z-index:99999;background:rgba(10,12,24,0.97);backdrop-filter:blur(6px);flex-direction:column;align-items:center;justify-content:center;gap:24px">
+  <div style="text-align:center;max-width:480px;padding:0 24px">
+    <div style="font-size:64px;margin-bottom:16px;filter:drop-shadow(0 0 20px rgba(251,191,36,.4))">🔧</div>
+    <h1 style="font-size:26px;font-weight:700;color:#f8fafc;margin-bottom:12px;letter-spacing:-.5px">ระบบกำลังปรับปรุง</h1>
+    <p style="font-size:15px;color:#94a3b8;line-height:1.7;margin-bottom:8px">ขณะนี้ระบบอยู่ในโหมดซ่อมบำรุง<br>กรุณาลองใหม่อีกครั้งในภายหลัง</p>
+    <p id="maintenanceReason" style="font-size:13px;color:#f59e0b;min-height:20px;font-style:italic"></p>
+    <div style="margin-top:32px;display:flex;align-items:center;justify-content:center;gap:10px">
+      <span style="width:8px;height:8px;border-radius:50%;background:#f59e0b;animation:maint-pulse 1.2s infinite"></span>
+      <span style="font-size:13px;color:#64748b">กำลังตรวจสอบสถานะ...</span>
+    </div>
+  </div>
+  <style>
+    @keyframes maint-pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.3;transform:scale(.7)} }
+  </style>
+</div>
+</body>
+</html><!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SQL File Converter</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<!-- [FIX] เปลี่ยนจาก cdn.sheetjs.com (unstable) → cdnjs (stable, no rate limit) -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+<!-- ⚙️ API_BASE: ถูก inject โดย GitHub Actions (sed) ก่อน deploy
+     %%API_BASE%% จะถูกแทนที่ด้วยค่าจริงใน deploy.yml
+     ถ้ายังเป็น placeholder → fallback localhost (dev) หรือ Render (production) -->
+<script>
+  (function () {
+    var injected = '%%API_BASE%%';
+    window.API_BASE = injected.indexOf('%%') === -1
+      ? injected.replace(/\/$/, '')
+      : (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+          ? 'http://localhost:8000'
+          : 'https://ba-tool-backend.onrender.com');
+  })();
+</script>
+</head>
+<body>
+
+<div class="loading-bar" id="loadingBar"></div>
+
+<!-- TOP BAR -->
+<div class="topbar">
+  <div class="logo-chip">🗄️</div>
+  <div>
+    <span class="topbar-title">SQL File Converter</span>
+    <span class="topbar-sub">/ แปลงและดาวน์โหลดข้อมูล</span>
+  </div>
+
+  <!-- Backend status indicator -->
+  <div class="backend-status" id="backendStatus">
+    <span class="status-dot offline" id="backendDot"></span>
+    <span class="backend-label" id="backendLabel">กำลังเชื่อมต่อ...</span>
+  </div>
+
+  <!-- Admin Console Button -->
+  <a class="admin-console-btn" href="https://ba-tool-admin.onrender.com" target="_blank" title="Admin Console">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+      <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+    </svg>
+    Admin Console
+  </a>
+
   <!-- Theme Toggle -->
   <div class="theme-toggle">
     <button class="theme-toggle-btn active" id="btnDark"  onclick="setTheme('dark')"  title="Dark mode">🌙</button>

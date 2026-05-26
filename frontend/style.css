@@ -48,6 +48,37 @@ body {
 }
 
 /* ─── THEME TOGGLE ─── */
+/* ─── ADMIN CONSOLE BUTTON ─── */
+.admin-console-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text2);
+  font-size: 0.78em;
+  font-weight: 500;
+  text-decoration: none;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+}
+.admin-console-btn:hover {
+  background: var(--accent, #00d68f);
+  border-color: var(--accent, #00d68f);
+  color: #fff;
+}
+.admin-console-btn svg {
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+.admin-console-btn:hover svg {
+  opacity: 1;
+}
+
 .theme-toggle {
   display: flex;
   align-items: center;
