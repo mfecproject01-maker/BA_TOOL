@@ -30,10 +30,10 @@ class MappingRepository:
             dm.has_precision,
             dm.has_scale
         FROM datatype_raw_mapping drm
-        JOIN db_type src_dt     ON src_dt.id   = drm.db_id
+        JOIN database_records src_dt     ON src_dt.id   = drm.db_id
         LEFT JOIN datatype_standard ds  ON ds.id = drm.standard_id
         LEFT JOIN datatype_mapping dm   ON dm.standard_id = drm.standard_id
-        JOIN db_type dst_dt     ON dst_dt.id   = dm.db_id
+        JOIN database_records dst_dt     ON dst_dt.id   = dm.db_id
     """
 
     def get_all(self, source_db: str = None) -> dict:
@@ -49,12 +49,12 @@ class MappingRepository:
                         ds.standard_type AS final_type,
                         drm.db_id
                     FROM datatype_raw_mapping drm
-                    JOIN db_type dt ON dt.id = drm.db_id
+                    JOIN database_records dt ON dt.id = drm.db_id
                     LEFT JOIN datatype_standard ds ON ds.id = drm.standard_id
                 """
                 params = []
                 if source_db:
-                    query += " WHERE LOWER(dt.db_name) = LOWER(%s)"
+                    query += " WHERE LOWER(dt.key) = LOWER(%s)"
                     params.append(source_db)
 
                 query += " ORDER BY drm.db_id, drm.id"
@@ -87,16 +87,16 @@ class MappingRepository:
                         COALESCE(dm.has_precision, false) AS has_precision,
                         COALESCE(dm.has_scale,     false) AS has_scale
                     FROM datatype_raw_mapping drm
-                    JOIN db_type src_dt
+                    JOIN database_records src_dt
                         ON src_dt.id = drm.db_id
-                       AND LOWER(src_dt.db_name) = LOWER(%s)
+                       AND LOWER(src_dt.key) = LOWER(%s)
                     LEFT JOIN datatype_standard ds
                         ON ds.id = drm.standard_id
                     LEFT JOIN datatype_mapping dm
                         ON dm.standard_id = drm.standard_id
                        AND dm.db_id = (
-                               SELECT id FROM db_type
-                               WHERE LOWER(db_name) = LOWER(%s)
+                               SELECT id FROM database_records
+                               WHERE LOWER(key) = LOWER(%s)
                            )
                     ORDER BY drm.id
                 """, (source_db, dest_db))
@@ -116,22 +116,22 @@ class MappingRepository:
             with conn.cursor() as cur:
                 # source = DB ที่มีใน datatype_raw_mapping (มี type ให้แปลง)
                 cur.execute("""
-                    SELECT DISTINCT dt.db_name
+                    SELECT DISTINCT dt.key
                     FROM datatype_raw_mapping drm
-                    JOIN db_type dt ON dt.id = drm.db_id
-                    ORDER BY dt.db_name
+                    JOIN database_records dt ON dt.id = drm.db_id
+                    ORDER BY dt.key
                 """)
                 source_rows = cur.fetchall()
 
                 # dest = DB ทุกตัวที่รู้จัก (ทั้ง source และ dest side)
                 cur.execute("""
-                    SELECT DISTINCT db_name FROM db_type
+                    SELECT DISTINCT key FROM database_records
                     WHERE id IN (
                         SELECT DISTINCT db_id FROM datatype_raw_mapping
                         UNION
                         SELECT DISTINCT db_id FROM datatype_mapping
                     )
-                    ORDER BY db_name
+                    ORDER BY key
                 """)
                 all_rows = cur.fetchall()
 
