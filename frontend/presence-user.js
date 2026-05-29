@@ -7,11 +7,23 @@
 (function () {
   'use strict';
 
-  const ADMIN_BACKEND = (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-    ? 'localhost:8000'
-    : 'admin-console-for-batool.onrender.com';
-  const WS_URL = (location.protocol === 'https:' ? 'wss' : 'ws') +
-    '://' + ADMIN_BACKEND + '/ws/presence';
+  // ── ใช้ BA-tool backend (ไม่ใช่ admin console) ──────────────────────────
+  // window.API_BASE ถูก inject ใน index.html ก่อน script นี้โหลดเสมอ
+  // production: https://ba-tool-backend.onrender.com
+  // local dev:  http://localhost:8000
+  function resolveWsUrl() {
+    const base = (window.API_BASE || '').trim().replace(/\/$/, '');
+    if (base) {
+      // แปลง http(s):// → ws(s)://
+      return base.replace(/^http/, 'ws') + '/ws/presence';
+    }
+    // fallback local dev
+    const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+    const host = isLocal ? 'localhost:8000' : 'ba-tool-backend.onrender.com';
+    return (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + host + '/ws/presence';
+  }
+
+  const WS_URL = resolveWsUrl();
 
   const PING_INTERVAL = 25_000;   // ms — must be < HEARTBEAT_INTERVAL on server
   const RECONNECT_DELAY = 5_000;

@@ -1570,8 +1570,8 @@ function toggleLogsPanel() {
 // ════════════════════════════════════════════════════════════════════════════
 
 let _inMaintenance   = false;
-const MAINT_POLL_ACTIVE_MS  = 10_000;  // poll ทุก 10 วิ ขณะ maintenance
-const MAINT_POLL_NORMAL_MS  = 30_000;  // poll ทุก 30 วิ ปกติ
+const MAINT_POLL_ACTIVE_MS  = 8_000;   // poll ทุก 8 วิ ขณะ maintenance (< backend TTL 10 วิ)
+const MAINT_POLL_NORMAL_MS  = 15_000;  // poll ทุก 15 วิ ปกติ (ลดจาก 30 เพื่อ sync เร็วขึ้น)
 let _maintPollTimer  = null;
 
 /** block/unblock ทุก interactive element */

@@ -1,0 +1,32 @@
+1. Database-Specific Data Types (Official Vendor Documentation)
+
+[1] Microsoft. Data types (Transact-SQL).
+Available at: https://learn.microsoft.com/en-us/sql/t-sql/data-types/data-types-transact-sql
+
+[2] PostgreSQL Global Development Group. PostgreSQL Data Types.
+Available at: https://www.postgresql.org/docs/current/datatype.html
+
+[3] Oracle Corporation. MySQL 8.0 Reference Manual — Data Types.
+Available at: https://dev.mysql.com/doc/refman/8.0/en/data-types.html
+
+[4] Oracle Corporation. Oracle Database 23c SQL Language Reference — Data Types.
+Available at: https://docs.oracle.com/en/database/oracle/oracle-database/23/sqlrf/Data-Types.html
+
+2. Standard SQL Data Types (ANSI / ISO References)
+
+[5] American National Standards Institute. ANSI SQL Standard.
+Available at: https://www.ansi.org
+
+[6] Microsoft. Equivalent ANSI SQL Data Types.
+Available at: https://support.microsoft.com/en-au/office/equivalent-ansi-sql-data-types-7a0a6bef-ef25-45f9-8a9a-3c5f21b5c65d
+
+[7] Oracle Corporation. ANSI SQL Data Types (TimesTen).
+Available at: https://docs.oracle.com/en/database/other-databases/timesten/22.1/sql-reference/ansi-sql-data-types.html
+
+[8] Oracle Corporation. Oracle Database 21c SQL Quick Reference — Data Types.
+Available at: https://docs.oracle.com/en/database/oracle/oracle-database/21/sqlqr/Data-Types.html
+
+3. Logical Types (Semantic Layer)
+
+[9] Apache Software Foundation. Apache Avro Specification — Logical Types.
+Available at: https://avro.apache.org/docs/1.10.0/spec.html?utm_source=chatgpt.com#Logical+Types

@@ -112,11 +112,15 @@ _ORIGINS = os.getenv(
     "http://localhost:5500,http://127.0.0.1:5500,http://localhost:8000,http://127.0.0.1:8000,null"
 ).split(",")
 
-# VERCEL_ORIGIN: ตั้งค่าใน Railway environment variable
-# เช่น VERCEL_ORIGIN=https://sql-file-converter.vercel.app
+# VERCEL_ORIGIN: frontend production URL (ตั้งใน Railway/Render env)
 _VERCEL_ORIGIN = os.getenv("VERCEL_ORIGIN", "").strip().rstrip("/")
 if _VERCEL_ORIGIN:
     _ORIGINS.append(_VERCEL_ORIGIN)
+
+# ADMIN_ORIGIN: admin console URL — ต้องเพิ่มหรือ admin console จะถูก CORS block ทุก request
+_ADMIN_ORIGIN = os.getenv("ADMIN_ORIGIN", "").strip().rstrip("/")
+if _ADMIN_ORIGIN:
+    _ORIGINS.append(_ADMIN_ORIGIN)
 
 app.add_middleware(
     CORSMiddleware,
@@ -585,3 +589,19 @@ def get_maintenance():
             "reason": reason,
         }
     }
+
+
+@app.post("/system/maintenance/refresh")
+def refresh_maintenance_cache():
+    """
+    Admin console เรียกหลังเปลี่ยน maintenance state เพื่อ force-invalidate cache ทันที
+    ไม่ต้องรอ TTL หมด
+    """
+    try:
+        from backend.middleware.maintenance_middleware import invalidate_maintenance_cache
+        invalidate_maintenance_cache()
+        logger.info("🔧 Maintenance cache invalidated by admin")
+        return {"success": True, "message": "Cache invalidated"}
+    except Exception as e:
+        logger.error(f"❌ Failed to invalidate maintenance cache: {e}")
+        raise HTTPException(500, "Failed to invalidate cache")

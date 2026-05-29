@@ -13,9 +13,14 @@ from starlette.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
 
-# Cache flag ไว้ 30 วินาที เพื่อไม่ให้ query DB ทุก request
+# Cache flag ไว้ 10 วินาที (ลดจาก 30 เพื่อ sync admin เร็วขึ้น)
 _cache: dict = {"enabled": False, "reason": "", "updated_at": 0.0}
-_CACHE_TTL = 30  # seconds
+_CACHE_TTL = 10  # seconds
+
+
+def invalidate_maintenance_cache() -> None:
+    """บังคับ clear cache ทันที — เรียกหลัง admin เปลี่ยน maintenance state"""
+    _cache["updated_at"] = 0.0
 
 
 def _fetch_maintenance_state() -> tuple[bool, str]:
@@ -51,7 +56,9 @@ def _get_maintenance_state() -> tuple[bool, str]:
 
 
 # Paths ที่ยังให้ผ่านได้แม้ maintenance
-_BYPASS_PATHS = {"/health", "/"}
+# NOTE: /system/maintenance ต้องอยู่ที่นี่ ไม่งั้น frontend poll แล้ว middleware block
+#       ตัวเองก่อน → overlay ไม่มีทางขึ้นได้เลย
+_BYPASS_PATHS = {"/health", "/", "/system/maintenance"}
 
 
 class MaintenanceMiddleware(BaseHTTPMiddleware):

@@ -12,6 +12,10 @@ services:
         sync: false
       - key: VERCEL_ORIGIN
         sync: false
+        # ตั้งค่าเป็น URL ของ frontend Vercel เช่น https://sql-file-converter.vercel.app
+      - key: ADMIN_ORIGIN
+        sync: false
+        # ตั้งค่าเป็น URL ของ admin console เช่น https://admin-console-for-batool-91pz.vercel.app
       - key: DB_POOL_MIN
         value: 2
       - key: DB_POOL_MAX
