@@ -1411,10 +1411,10 @@ function showUsernameModal() {
   const { modal, input } = usernameModalState;
   const current = getSavedUsername();
   input.value = current;
-  updateSaveStateOnShow();
+  modal.removeAttribute('aria-hidden');
   modal.style.display = 'flex';
-  modal.setAttribute('aria-hidden', 'false');
-  input.focus();
+  updateSaveStateOnShow();
+  setTimeout(() => input.focus(), 50);
 }
 
 function updateSaveStateOnShow() {
