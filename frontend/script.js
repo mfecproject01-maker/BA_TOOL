@@ -1366,52 +1366,84 @@ function validateUsername(name) {
   return { ok:true, value: trimmed };
 }
 
-function showUsernameModal() {
+let usernameModalState = null;
+
+function initUsernameModal() {
   const modal = document.getElementById('usernameModal');
-  if (!modal) return;
-  modal.style.display = 'flex';
-  modal.setAttribute('aria-hidden','false');
   const input = document.getElementById('usernameModalInput');
   const save = document.getElementById('saveUsernameBtn');
   const avatar = document.getElementById('modalAvatar');
   const feedback = document.getElementById('usernameFeedback');
-  const current = localStorage.getItem('username') || '';
-  if (input) { input.value = current; input.focus(); }
-  if (!input || !save || !avatar || !feedback) {
-    console.warn('Username modal missing required elements');
+
+  if (!modal || !input || !save || !avatar || !feedback) {
+    console.warn('Username modal initialization failed because an element is missing');
     return;
   }
-  save.disabled = true;
 
-  function onInput() {
-    const v = input.value || '';
-    const g = gradientFromName(v);
-    avatar.textContent = initialsFromName(v);
+  usernameModalState = { modal, input, save, avatar, feedback };
+  save.disabled = false;
+
+  const updateSaveState = () => {
+    const value = input.value || '';
+    const g = gradientFromName(value);
+    avatar.textContent = initialsFromName(value);
     avatar.style.background = g;
-    const ok = validateUsername(v);
-    if (!ok.ok) {
-      feedback.textContent = ok.msg;
-      save.disabled = true;
-    } else {
-      feedback.textContent = '';
-      save.disabled = false;
-    }
-  }
+    const ok = validateUsername(value);
+    feedback.textContent = ok.ok ? '' : ok.msg;
+  };
 
-  function onKey(e) {
+  input.addEventListener('input', updateSaveState);
+  input.addEventListener('compositionend', updateSaveState);
+  input.addEventListener('keyup', updateSaveState);
+  input.addEventListener('change', updateSaveState);
+
+  input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (!save.disabled) saveUsername();
+      if (!save.disabled) saveUsername(input.value);
     }
-    if (e.key === 'Escape') { e.preventDefault(); }
-  }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+    }
+  });
 
-  input.addEventListener('input', onInput);
-  input.addEventListener('compositionend', onInput);
-  input.addEventListener('keyup', onInput);
-  input.addEventListener('keydown', onKey);
-  save.addEventListener('click', (event) => { event.preventDefault(); saveUsername(input.value); });
-  onInput();
+  save.addEventListener('click', (event) => {
+    event.preventDefault();
+    const value = input.value || '';
+    const ok = validateUsername(value);
+    if (!ok.ok) {
+      feedback.textContent = ok.msg;
+      input.focus();
+      return;
+    }
+    saveUsername(value);
+  });
+
+  updateSaveState();
+}
+
+function showUsernameModal() {
+  if (!usernameModalState) initUsernameModal();
+  if (!usernameModalState) return;
+
+  const { modal, input } = usernameModalState;
+  const current = getSavedUsername();
+  input.value = current;
+  updateSaveStateOnShow();
+  modal.style.display = 'flex';
+  modal.setAttribute('aria-hidden', 'false');
+  input.focus();
+}
+
+function updateSaveStateOnShow() {
+  if (!usernameModalState) return;
+  const { input, avatar, feedback } = usernameModalState;
+  const value = input.value || '';
+  const g = gradientFromName(value);
+  avatar.textContent = initialsFromName(value);
+  avatar.style.background = g;
+  const ok = validateUsername(value);
+  feedback.textContent = ok.ok ? '' : ok.msg;
 }
 
 function saveUsername(username) {
@@ -1508,11 +1540,12 @@ function showSessionExpiredOverlay() {
 
 // Initialize on load
 window.addEventListener('DOMContentLoaded', () => {
-  const saved = localStorage.getItem('username');
+  const saved = getSavedUsername();
   if (!saved) {
-    // lock interactions by showing modal
+    // lock interactions by showing modal for new users
     showUsernameModal();
   } else {
+    // existing user on this browser: skip onboarding
     handleLocalUsernameChange(saved);
   }
   enableProfileEdit();
@@ -1855,7 +1888,9 @@ async function checkMaintenance() {
 
     // ถ้าเพิ่งกลับมาจาก maintenance → reload หน้าเพื่อ reset state ทั้งหมด
     if (_inMaintenance && !active) {
-      window.location.reload();
+      const refreshUrl = new URL(window.location.href);
+      refreshUrl.searchParams.set('_refresh', Date.now().toString());
+      window.location.replace(refreshUrl.toString());
       return;
     }
 

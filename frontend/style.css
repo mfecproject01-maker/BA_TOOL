@@ -40,7 +40,10 @@
 
 body {
   font-family: var(--sans);
-  background: var(--bg);
+  background:
+    radial-gradient(circle at top left, rgba(0, 214, 143, 0.12), transparent 22%),
+    radial-gradient(circle at top right, rgba(0, 148, 255, 0.14), transparent 18%),
+    var(--bg);
   color: var(--text);
   min-height: 100vh;
   padding: 0;
@@ -136,7 +139,8 @@ body {
 
 /* Workspace capsule (glass) */
 .glass { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.14); backdrop-filter: blur(18px); }
-.workspace-capsule { display:flex; align-items:center; gap:18px; padding:10px 16px; min-width:320px; max-width:760px; box-shadow:0 18px 40px rgba(0,0,0,0.12); }
+.workspace-capsule { display:flex; align-items:center; gap:18px; padding:12px 18px; min-width:320px; max-width:760px; border:1px solid rgba(255,255,255,0.14); background:rgba(255,255,255,0.08); box-shadow:0 22px 50px rgba(0,0,0,0.14); border-radius:20px; transition: transform 0.22s ease, box-shadow 0.22s ease, background 0.22s ease; }
+.workspace-capsule:hover { transform: translateY(-1px); background:rgba(255,255,255,0.10); }
 .capsule-item { display:flex; align-items:center; gap:10px; }
 .capsule-item .status-label { text-transform:uppercase; letter-spacing:0.08em; }
 .capsule-divider { width:1px; height:32px; background: linear-gradient(180deg, rgba(255,255,255,0.25), rgba(255,255,255,0.08)); border-radius:1px; }
@@ -168,10 +172,10 @@ body {
 .theme-toggle-btn.active { background: rgba(255,255,255,0.16); }
 
 /* Profile chip */
-.profile-chip { display:flex; align-items:center; gap:8px; padding:6px 10px; border-radius:14px; background:var(--surface2); border:1px solid var(--border); cursor:pointer; transition:all 0.18s ease; min-width:120px; }
-.profile-chip:hover { transform:translateY(-2px); box-shadow:0 6px 18px rgba(0,0,0,0.14); }
-.profile-chip .avatar { width:34px; height:34px; border-radius:10px; display:flex; align-items:center; justify-content:center; font-weight:700; font-family:var(--mono); background:linear-gradient(135deg,#6ee7b7,#60a5fa); color:#05221a; }
-.profile-chip .username { font-weight:600; color:var(--text); font-size:0.9em; }
+.profile-chip { display:flex; align-items:center; gap:10px; padding:10px 14px; border-radius:18px; background: rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12); cursor:pointer; transition:transform 0.22s ease, box-shadow 0.22s ease, background 0.22s ease; min-width:150px; }
+.profile-chip:hover { transform:translateY(-2px); background: rgba(255,255,255,0.12); box-shadow:0 16px 40px rgba(0,0,0,0.14); }
+.profile-chip .avatar { width:40px; height:40px; border-radius:14px; display:flex; align-items:center; justify-content:center; font-weight:700; font-family:var(--mono); background:linear-gradient(135deg,#6ee7b7,#60a5fa); color:#05221a; }
+.profile-chip .username { font-weight:700; color:var(--text); font-size:0.95em; }
 .profile-edit-btn { background:none; border:none; color:var(--text3); cursor:pointer; padding:6px; border-radius:8px; }
 .profile-edit-btn:hover { color:var(--accent2); transform:scale(1.02); }
 
@@ -2294,6 +2298,19 @@ body {
   background: rgba(255, 255, 255, 0.86);
 }
 
+.topbar {
+  height: 64px;
+  background: linear-gradient(180deg, rgba(9, 14, 29, 0.94) 0%, rgba(22, 28, 45, 0.88) 100%);
+  backdrop-filter: blur(20px);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.20);
+  transition: background 0.35s ease, border-color 0.35s ease, box-shadow 0.35s ease;
+}
+
+[data-theme="light"] .topbar {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.94) 0%, rgba(246, 248, 251, 0.92) 100%);
+}
+
 .logo-chip {
   border-radius: 10px;
   box-shadow: 0 10px 24px rgba(0, 148, 255, 0.24);
@@ -2338,6 +2355,12 @@ body {
   background:
     linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 56px),
     var(--surface);
+  transition: transform 0.22s ease, box-shadow 0.22s ease, border-color 0.22s ease;
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.18);
 }
 
 .card-header {
