@@ -7,19 +7,19 @@
 (function () {
   'use strict';
 
-  // ── ใช้ BA-tool backend (ไม่ใช่ admin console) ──────────────────────────
-  // window.API_BASE ถูก inject ใน index.html ก่อน script นี้โหลดเสมอ
-  // production: https://ba-tool-backend.onrender.com
-  // local dev:  http://localhost:8000
+  // ── ใช้ Admin Console backend เพื่อส่งสถานะ (Presence) ──────────────────
+  // window.ADMIN_API_BASE ถูกกำหนดใน index.html ก่อน script นี้โหลดเสมอ
+  // production: https://admin-console-for-batool.onrender.com
+  // local dev:  http://localhost:8000 (หรือพอร์ตอื่นๆ ตามการตั้งค่า)
   function resolveWsUrl() {
-    const base = (window.API_BASE || '').trim().replace(/\/$/, '');
+    const base = (window.ADMIN_API_BASE || '').trim().replace(/\/$/, '');
     if (base) {
       // แปลง http(s):// → ws(s)://
       return base.replace(/^http/, 'ws') + '/ws/presence';
     }
-    // fallback local dev
+    // fallback local dev / production
     const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-    const host = isLocal ? 'localhost:8000' : 'ba-tool-backend.onrender.com';
+    const host = isLocal ? 'localhost:8000' : 'admin-console-for-batool.onrender.com';
     return (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + host + '/ws/presence';
   }
 
