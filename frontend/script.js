@@ -33,6 +33,19 @@ async function fetchWithApiFallback(path, options) {
     try {
       const res = await fetch(`${base}${path}`, options);
       API_BASE = base;
+
+      // Detect session-not-found responses and surface a premium overlay
+      if (res.status === 404) {
+        try {
+          const body = await res.clone().json().catch(() => ({}));
+          const msg = (body && (body.detail || body.message || body.error)) || '';
+          if (/session not found|session.*not found|session.*expired/i.test(msg) || /session not found/i.test(msg)) {
+            // show overlay but continue returning response so existing callers can handle it
+            try { showSessionExpiredOverlay(); } catch (e) { /* ignore */ }
+          }
+        } catch (e) {}
+      }
+
       return res;
     } catch (err) {
       lastErr = err;
@@ -1272,11 +1285,12 @@ function updateStats(files, tables, rows) {
 }
 
 function updateBadges(tables, rows, status) {
-  document.getElementById('badgeTables').textContent = tables+' tables';
-  document.getElementById('badgeRows').textContent   = rows.toLocaleString()+' rows';
+  const bt = document.getElementById('badgeTables');
+  const br = document.getElementById('badgeRows');
+  if (bt) bt.textContent = String(tables);
+  if (br) br.textContent = String(rows.toLocaleString());
   const b = document.getElementById('badgeStatus');
-  b.textContent = status;
-  b.className   = 'badge' + ({mapped:' converted', loaded:' active'}[status] || '');
+  if (b) { b.textContent = status; b.className = 'process-badge'; }
 }
 
 function showStatus(id, type, msg) {
@@ -1306,6 +1320,166 @@ function setBackendStatus(ok) {
   dot.className   = 'status-dot '+(ok?'online':'offline');
   lbl.textContent = ok ? 'API Online' : 'API Offline';
 }
+
+/* ────────────────────────────────────────────────────────────
+   Username onboarding, avatar generator, multi-tab sync,
+   profile chip editor, and session-expired overlay logic
+   ─────────────────────────────────────────────────────────── */
+
+function initialsFromName(name) {
+  if (!name) return '—';
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '—';
+  if (parts.length === 1) return parts[0].slice(0,1).toUpperCase();
+  return (parts[0][0] + parts[parts.length-1][0]).toUpperCase();
+}
+
+function gradientFromName(name) {
+  const palette = [ ['#7c3aed','#06b6d4'], ['#06b6d4','#60a5fa'], ['#34d399','#60a5fa'], ['#f472b6','#f97316'], ['#60a5fa','#7c3aed'] ];
+  let sum = 0; for (let i=0;i<name.length;i++) sum = (sum*31 + name.charCodeAt(i))|0;
+  const idx = Math.abs(sum) % palette.length; const p = palette[idx];
+  return `linear-gradient(135deg, ${p[0]}, ${p[1]})`;
+}
+
+function renderProfile(name) {
+  const elName = document.getElementById('profileName');
+  const elAvatar = document.getElementById('profileAvatar');
+  if (elName) elName.textContent = name || 'Guest';
+  if (elAvatar) {
+    const initials = initialsFromName(name || '');
+    elAvatar.textContent = initials;
+    elAvatar.style.background = gradientFromName(name || '');
+  }
+}
+
+function validateUsername(name) {
+  if (!name) return { ok:false, msg:'Required' };
+  const trimmed = name.trim();
+  if (!trimmed) return { ok:false, msg:'Cannot be only spaces' };
+  if (trimmed.length < 2) return { ok:false, msg:'Minimum 2 characters' };
+  if (trimmed.length > 30) return { ok:false, msg:'Maximum 30 characters' };
+  return { ok:true, value: trimmed };
+}
+
+function showUsernameModal() {
+  const modal = document.getElementById('usernameModal');
+  if (!modal) return;
+  modal.style.display = 'flex';
+  modal.setAttribute('aria-hidden','false');
+  const input = document.getElementById('usernameInput');
+  const save = document.getElementById('saveUsernameBtn');
+  const avatar = document.getElementById('modalAvatar');
+  const feedback = document.getElementById('usernameFeedback');
+  if (input) { input.value = ''; input.focus(); }
+  if (save) save.disabled = true;
+
+  function onInput() {
+    const v = input.value || '';
+    const g = gradientFromName(v);
+    avatar.textContent = initialsFromName(v);
+    avatar.style.background = g;
+    const ok = validateUsername(v);
+    if (!ok.ok) { feedback.textContent = ok.msg; save.disabled = true; }
+    else { feedback.textContent = ''; save.disabled = false; }
+  }
+
+  function onKey(e) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!save.disabled) saveUsername();
+    }
+    if (e.key === 'Escape') { e.preventDefault(); }
+  }
+
+  input.addEventListener('input', onInput);
+  input.addEventListener('keydown', onKey);
+  save.addEventListener('click', saveUsername);
+}
+
+function saveUsername() {
+  const input = document.getElementById('usernameInput');
+  if (!input) return;
+  const v = input.value || '';
+  const ok = validateUsername(v);
+  if (!ok.ok) return;
+  localStorage.setItem('username', ok.value);
+  renderProfile(ok.value);
+  // close modal
+  const modal = document.getElementById('usernameModal'); if (modal) { modal.style.display = 'none'; modal.setAttribute('aria-hidden','true'); }
+}
+
+function handleLocalUsernameChange(name) {
+  renderProfile(name);
+}
+
+window.addEventListener('storage', (e) => {
+  if (e.key === 'username') {
+    handleLocalUsernameChange(e.newValue || 'Guest');
+  }
+});
+
+// Inline profile edit
+function enableProfileEdit() {
+  const chip = document.getElementById('profileChip');
+  const btn  = document.getElementById('profileEditBtn');
+  if (!chip || !btn) return;
+  btn.addEventListener('click', () => {
+    const nameEl = document.getElementById('profileName');
+    const current = nameEl.textContent || '';
+    const input = document.createElement('input'); input.type = 'text'; input.value = current; input.className = 'profile-inline-input'; input.style.padding='6px 8px'; input.style.borderRadius='8px'; input.style.border='1px solid rgba(255,255,255,0.06)';
+    const save = document.createElement('button'); save.textContent='Save'; save.className='btn'; save.style.marginLeft='8px';
+    const cancel = document.createElement('button'); cancel.textContent='Cancel'; cancel.className='btn'; cancel.style.marginLeft='6px';
+    nameEl.replaceWith(input);
+    btn.style.display = 'none';
+    chip.appendChild(save); chip.appendChild(cancel);
+
+    function cleanup() {
+      const span = document.createElement('div'); span.id = 'profileName'; span.className='username'; span.textContent = input.value || 'Guest';
+      input.replaceWith(span); save.remove(); cancel.remove(); btn.style.display='inline-block'; renderProfile(span.textContent);
+    }
+
+    save.addEventListener('click', () => {
+      const ok = validateUsername(input.value);
+      if (!ok.ok) { input.focus(); return; }
+      localStorage.setItem('username', ok.value);
+      cleanup();
+    });
+    cancel.addEventListener('click', () => { cleanup(); });
+    input.addEventListener('keydown', (e) => { if (e.key==='Enter') save.click(); if (e.key==='Escape') cancel.click(); });
+    input.focus();
+  });
+}
+
+// Session expired overlay
+function showSessionExpiredOverlay() {
+  const o = document.getElementById('sessionExpiredModal');
+  if (!o) return; o.style.display = 'flex';
+  const btn = document.getElementById('reuploadBtn');
+  btn.onclick = () => {
+    // reset workspace state
+    currentData = {}; uploadedFiles = []; sessionId = null; converted = false;
+    document.getElementById('fileList').innerHTML = '';
+    clearUI();
+    o.style.display = 'none';
+    // reopen onboarding
+    showUsernameModal();
+  };
+}
+
+// Initialize on load
+window.addEventListener('DOMContentLoaded', () => {
+  const saved = localStorage.getItem('username');
+  if (!saved) {
+    // lock interactions by showing modal
+    showUsernameModal();
+  } else {
+    handleLocalUsernameChange(saved);
+  }
+  enableProfileEdit();
+  // wire profile chip click to open onboarding modal for quick rename
+  document.getElementById('profileChip')?.addEventListener('click', (e) => { if ((e.target||{}).id !== 'profileEditBtn') showUsernameModal(); });
+});
+
 
 function setTheme(theme) {
   document.documentElement.setAttribute('data-theme', theme);
