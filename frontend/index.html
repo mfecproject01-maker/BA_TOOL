@@ -38,17 +38,12 @@
 <div class="loading-bar" id="loadingBar"></div>
 
 <!-- TOP BAR -->
-<header class="topbar" role="banner">
-  <div class="topbar-inner">
-    <div class="topbar-left">
-      <div class="brand">
-        <div class="brand-logo" aria-hidden="true">🗄️</div>
-        <div class="brand-text">
-          <div class="brand-title">SQL File Converter</div>
-          <div class="brand-sub">/ แปลงและดาวน์โหลดข้อมูล</div>
-        </div>
-      </div>
-    </div>
+<div class="topbar">
+  <div class="logo-chip">🗄️</div>
+  <div>
+    <span class="topbar-title">SQL File Converter</span>
+    <span class="topbar-sub">/ แปลงและดาวน์โหลดข้อมูล</span>
+  </div>
 
   <!-- Backend status indicator -->
   <div class="backend-status" id="backendStatus">
@@ -56,14 +51,31 @@
     <span class="backend-label" id="backendLabel">กำลังเชื่อมต่อ...</span>
   </div>
 
-    <div class="topbar-right">
-      <div class="controls">
-        <a class="admin-console-btn" href="https://admin-console-for-batool-91pz.vercel.app/" target="_blank" title="Admin Console">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
-            <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
-          </svg>
-        </a>
+  <!-- User Profile Section -->
+  <div class="user-profile" id="userProfileContainer">
+    <!-- Active status display state -->
+    <div class="user-badge hidden" id="userActiveBadge" onclick="enableNameEditing()">
+      <div class="avatar-circle" id="userAvatarCircle">U</div>
+      <span class="user-display-name" id="userDisplayName">User</span>
+      <span class="status-indicator-dot pulsing"></span>
+      <span class="edit-icon">✏️</span>
+    </div>
+    
+    <!-- Editing input state -->
+    <div class="user-input-wrapper" id="userInputWrapper">
+      <span class="user-avatar-icon">👤</span>
+      <input type="text" id="usernameInput" class="username-input" placeholder="ใส่ชื่อของคุณ..." title="ชื่อผู้ใช้งานสำหรับเก็บใน Log" onblur="disableNameEditing()" onchange="saveUsername(this.value)">
+    </div>
+  </div>
+
+  <!-- Admin Console Button -->
+  <a class="admin-console-btn" href="https://admin-console-for-batool-91pz.vercel.app/" target="_blank" title="Admin Console">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+      <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+    </svg>
+    Admin Console
+  </a>
 
         <div class="theme-toggle" role="toolbar" aria-label="Theme">
           <button class="theme-toggle-btn" id="btnDark" onclick="setTheme('dark')" title="Dark mode">🌙</button>
