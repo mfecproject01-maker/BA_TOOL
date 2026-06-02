@@ -50,6 +50,8 @@
     return {
       event:      'user_online',
       user_id:    getUserId(),
+      username:   localStorage.getItem('username') || null,
+      session_id: window.sessionId || null,
       page:       location.pathname + location.search,
       user_agent: navigator.userAgent,
       timestamp:  new Date().toISOString(),
@@ -104,9 +106,53 @@
       ws.send(JSON.stringify({
         event: 'page_change',
         page:  location.pathname + location.search,
+        username: localStorage.getItem('username') || null,
+        session_id: window.sessionId || null,
       }));
     }
   }
+
+  // Presence state reporting (ACTIVE / BACKGROUND /INACTIVE)
+  let inactivityTimer = null;
+  const INACTIVE_DELAY = 3000; // 3s debounce
+
+  function sendPresence(status) {
+    const payload = {
+      event: 'presence_update',
+      status,
+      username: localStorage.getItem('username') || null,
+      session_id: window.sessionId || null,
+      last_activity: new Date().toISOString(),
+      page: location.pathname + location.search,
+    };
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify(payload));
+    } else {
+      // best-effort HTTP fallback
+      try {
+        if (window.API_BASE) fetch(window.API_BASE + '/presence', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) }).catch(()=>{});
+      } catch(e){}
+    }
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') {
+      if (inactivityTimer) { clearTimeout(inactivityTimer); inactivityTimer = null; }
+      sendPresence('ACTIVE');
+    } else {
+      sendPresence('BACKGROUND');
+      inactivityTimer = setTimeout(() => {
+        if (document.visibilityState !== 'visible') sendPresence('INACTIVE');
+      }, INACTIVE_DELAY);
+    }
+  }, { passive:true });
+
+  ['mousemove','keydown','click','touchstart'].forEach(ev => {
+    window.addEventListener(ev, () => {
+      if (inactivityTimer) { clearTimeout(inactivityTimer); inactivityTimer = null; }
+      sendPresence('ACTIVE');
+    }, { passive:true });
+  });
 
   // Intercept pushState / replaceState for SPA navigation
   ['pushState', 'replaceState'].forEach(method => {

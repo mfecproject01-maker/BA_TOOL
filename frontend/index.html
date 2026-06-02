@@ -38,12 +38,17 @@
 <div class="loading-bar" id="loadingBar"></div>
 
 <!-- TOP BAR -->
-<div class="topbar">
-  <div class="logo-chip">🗄️</div>
-  <div>
-    <span class="topbar-title">SQL File Converter</span>
-    <span class="topbar-sub">/ แปลงและดาวน์โหลดข้อมูล</span>
-  </div>
+<header class="topbar" role="banner">
+  <div class="topbar-inner">
+    <div class="topbar-left">
+      <div class="brand">
+        <div class="brand-logo" aria-hidden="true">🗄️</div>
+        <div class="brand-text">
+          <div class="brand-title">SQL File Converter</div>
+          <div class="brand-sub">/ แปลงและดาวน์โหลดข้อมูล</div>
+        </div>
+      </div>
+    </div>
 
   <!-- Backend status indicator -->
   <div class="backend-status" id="backendStatus">
@@ -51,44 +56,29 @@
     <span class="backend-label" id="backendLabel">กำลังเชื่อมต่อ...</span>
   </div>
 
-  <!-- User Profile Section -->
-  <div class="user-profile" id="userProfileContainer">
-    <!-- Active status display state -->
-    <div class="user-badge hidden" id="userActiveBadge" onclick="enableNameEditing()">
-      <div class="avatar-circle" id="userAvatarCircle">U</div>
-      <span class="user-display-name" id="userDisplayName">User</span>
-      <span class="status-indicator-dot pulsing"></span>
-      <span class="edit-icon">✏️</span>
+    <div class="topbar-right">
+      <div class="controls">
+        <a class="admin-console-btn" href="https://admin-console-for-batool-91pz.vercel.app/" target="_blank" title="Admin Console">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+            <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+          </svg>
+        </a>
+
+        <div class="theme-toggle" role="toolbar" aria-label="Theme">
+          <button class="theme-toggle-btn" id="btnDark" onclick="setTheme('dark')" title="Dark mode">🌙</button>
+          <button class="theme-toggle-btn" id="btnLight" onclick="setTheme('light')" title="Light mode">☀️</button>
+        </div>
+
+        <div class="profile-chip" id="profileChip" tabindex="0" aria-haspopup="true" aria-expanded="false">
+          <div class="avatar" id="profileAvatar">—</div>
+          <div class="username" id="profileName">Guest</div>
+          <button class="profile-edit-btn" id="profileEditBtn" aria-label="Edit profile">✎</button>
+        </div>
+      </div>
     </div>
-    
-    <!-- Editing input state -->
-    <div class="user-input-wrapper" id="userInputWrapper">
-      <span class="user-avatar-icon">👤</span>
-      <input type="text" id="usernameInput" class="username-input" placeholder="ใส่ชื่อของคุณ..." title="ชื่อผู้ใช้งานสำหรับเก็บใน Log" onblur="disableNameEditing()" onchange="saveUsername(this.value)">
-    </div>
   </div>
-
-  <!-- Admin Console Button -->
-  <a class="admin-console-btn" href="https://admin-console-for-batool-91pz.vercel.app/" target="_blank" title="Admin Console">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
-      <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
-    </svg>
-    Admin Console
-  </a>
-
-  <!-- Theme Toggle -->
-  <div class="theme-toggle">
-    <button class="theme-toggle-btn active" id="btnDark"  onclick="setTheme('dark')"  title="Dark mode">🌙</button>
-    <button class="theme-toggle-btn"        id="btnLight" onclick="setTheme('light')" title="Light mode">☀️</button>
-  </div>
-
-  <div class="topbar-badge">
-    <span class="badge" id="badgeTables">0 tables</span>
-    <span class="badge" id="badgeRows">0 rows</span>
-    <span class="badge" id="badgeStatus">ready</span>
-  </div>
-</div>
+</header>
 
 <!-- WORKSPACE -->
 <div class="workspace">
@@ -367,7 +357,39 @@
 </div><!-- /ref-panel -->
 
 <script src="script.js"></script>
-<script src="/presence-user.js"></script>
+<script src="presence-user.js"></script>
+
+<!-- Username Onboarding Modal -->
+<div id="usernameModal" class="modal-backdrop" aria-hidden="true">
+  <div class="modal glass" role="dialog" aria-modal="true" aria-labelledby="usernameModalTitle">
+    <div class="modal-header">
+      <h2 id="usernameModalTitle">Welcome — Set your display name</h2>
+    </div>
+    <div class="modal-body">
+      <div class="avatar-preview" id="modalAvatar">—</div>
+      <label class="floating-input">
+        <input type="text" id="usernameInput" autocomplete="off" />
+        <span class="floating-label">Display name</span>
+        <div class="input-feedback" id="usernameFeedback"></div>
+      </label>
+    </div>
+    <div class="modal-actions">
+      <button id="saveUsernameBtn" class="btn primary" disabled>Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Session Expired Overlay -->
+<div id="sessionExpiredModal" class="overlay-backdrop" style="display:none">
+  <div class="overlay-card glass">
+    <div class="overlay-icon">⚠️</div>
+    <h3 class="overlay-title">Session Expired</h3>
+    <p class="overlay-msg">Your session was not found or has expired. To recover, please re-upload your files.</p>
+    <div class="overlay-actions">
+      <button id="reuploadBtn" class="btn primary">Re-upload Files</button>
+    </div>
+  </div>
+</div>
 
 <!-- ══ MAINTENANCE MODE OVERLAY ══════════════════════════════════════════════ -->
 <div id="maintenanceOverlay" style="display:none;position:fixed;inset:0;z-index:99999;background:linear-gradient(135deg,#0a0c18 0%,#0f1629 50%,#0a0c18 100%);backdrop-filter:blur(12px);flex-direction:column;align-items:center;justify-content:center;gap:0">
