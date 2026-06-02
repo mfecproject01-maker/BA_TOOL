@@ -43,6 +43,12 @@
     <span class="backend-label" id="backendLabel">กำลังเชื่อมต่อ...</span>
   </div>
 
+  <!-- User Profile Section -->
+  <div class="user-profile">
+    <span class="user-avatar" id="userAvatar">👤</span>
+    <input type="text" id="usernameInput" class="username-input" placeholder="ใส่ชื่อของคุณ..." title="ชื่อผู้ใช้งานสำหรับเก็บใน Log" onchange="saveUsername(this.value)">
+  </div>
+
   <!-- Admin Console Button -->
   <a class="admin-console-btn" href="https://admin-console-for-batool-91pz.vercel.app/" target="_blank" title="Admin Console">
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

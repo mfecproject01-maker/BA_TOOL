@@ -125,6 +125,16 @@
     ws?.close();
   });
 
+  window.addEventListener('ba_username_changed', () => {
+    if (ws) {
+      ws.close();
+      // wait a tiny bit for the close event to fire and clear the timer, then reconnect
+      setTimeout(connect, 100);
+    } else {
+      connect();
+    }
+  });
+
   // ── Boot ──────────────────────────────────────────────────────────────────
 
   connect();

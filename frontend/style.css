@@ -4107,3 +4107,56 @@ body { padding-bottom: 72px; }
   .ref-body.dynamic { grid-template-columns: 1fr; }
   .support-table { min-width: 640px; }
 }
+
+/* ── User Profile Widget ─────────────────────────────────── */
+.user-profile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(30, 35, 54, 0.72);
+  border: 1px solid rgba(74, 91, 139, 0.5);
+  border-radius: 10px;
+  padding: 4px 10px;
+  height: 32px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+[data-theme="light"] .user-profile {
+  background: rgba(244, 246, 251, 0.86);
+  border-color: rgba(196, 202, 222, 0.85);
+}
+
+.user-profile:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(0, 214, 143, 0.15);
+}
+
+.user-avatar {
+  font-size: 14px;
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.85;
+}
+
+.username-input {
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  outline: none;
+  width: 110px;
+  padding: 0;
+  transition: width 0.15s ease-in-out;
+}
+
+.username-input:focus {
+  width: 140px;
+}
+
+.username-input::placeholder {
+  color: var(--text3);
+  font-style: italic;
+}
