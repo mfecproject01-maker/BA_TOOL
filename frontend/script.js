@@ -1401,16 +1401,31 @@ function showUsernameModal() {
   save.addEventListener('click', saveUsername);
 }
 
-function saveUsername() {
+function saveUsername(username) {
+  // Accept optional `username` (from inline editor or programmatic calls)
   const input = document.getElementById('usernameInput');
-  if (!input) return;
-  const v = input.value || '';
-  const ok = validateUsername(v);
+  let v = (typeof username === 'string') ? username : (input ? input.value : '');
+  const ok = validateUsername(v || '');
   if (!ok.ok) return;
-  localStorage.setItem('username', ok.value);
+
+  // persist both the lightweight local 'username' and the session object used elsewhere
+  try {
+    localStorage.setItem('username', ok.value);
+    const sessionObj = { user_id: ok.value, id: ok.value };
+    localStorage.setItem('ba_session', JSON.stringify(sessionObj));
+  } catch (e) {
+    console.error('Failed to persist username/session', e);
+  }
+
+  // Notify presence / other listeners
+  window.dispatchEvent(new Event('ba_username_changed'));
+
   renderProfile(ok.value);
-  // close modal
-  const modal = document.getElementById('usernameModal'); if (modal) { modal.style.display = 'none'; modal.setAttribute('aria-hidden','true'); }
+  try { renderUsernameState(); } catch (e) { /* optional UI may not exist */ }
+
+  // close modal if present
+  const modal = document.getElementById('usernameModal');
+  if (modal) { modal.style.display = 'none'; modal.setAttribute('aria-hidden','true'); }
 }
 
 function handleLocalUsernameChange(name) {
@@ -2410,22 +2425,7 @@ function initUsername() {
   renderUsernameState();
 }
 
-function saveUsername(username) {
-  username = (username || '').trim();
-  try {
-    if (username) {
-      const sessionObj = { user_id: username, id: username };
-      localStorage.setItem('ba_session', JSON.stringify(sessionObj));
-    } else {
-      localStorage.removeItem('ba_session');
-    }
-    // Dispatch custom event to let presence-user.js reconnect and update the Admin Console instantly
-    window.dispatchEvent(new Event('ba_username_changed'));
-    renderUsernameState();
-  } catch (e) {
-    console.error('Failed to save username:', e);
-  }
-}
+// `saveUsername` is implemented earlier and intentionally unified; keep helpers below.
 
 function getSavedUsername() {
   try {
