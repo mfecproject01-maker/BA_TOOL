@@ -320,16 +320,24 @@ async def convert(
     files: List[UploadFile] = File(...),
     source_db: str | None = Form(default=None),
     dest_db: str | None = Form(default=None),
+    username: str | None = Form(default=None),
 ):
     if len(files) > MAX_FILES:
         raise HTTPException(400, f"Too many files (max {MAX_FILES})")
 
     active_mapping = _load_mapping(source_db, dest_db)
     
-    logger.info(
-        f"📥 Convert {len(files)} file(s) "
-        f"[{source_db or 'default'} → {dest_db or 'default'}]"
-    )
+    if username:
+        logger.info(
+            f"📥 Convert {len(files)} file(s) "
+            f"[{source_db or 'default'} → {dest_db or 'default'}] "
+            f"by username={username}"
+        )
+    else:
+        logger.info(
+            f"📥 Convert {len(files)} file(s) "
+            f"[{source_db or 'default'} → {dest_db or 'default'}]"
+        )
 
     tables: dict = {}
     unknown: dict = {}
@@ -466,7 +474,7 @@ def override(session_id: str, body: OverrideRequest):
     raise HTTPException(404, f"Column '{body.column}' not found in table '{body.table}'")
 
 @app.delete("/session/{session_id}")
-def delete_session(session_id: str):
+def delete_session(session_id: str, username: str | None = Query(default=None)):
     # UUID validation centralised in get_cached_data; replicate here since
     # delete does not go through that helper.
     try:
@@ -475,7 +483,10 @@ def delete_session(session_id: str):
         raise HTTPException(400, "Invalid session ID format")
     if session_id in result_cache:
         del result_cache[session_id]
-        logger.info(f"🗑  Session {session_id} deleted")
+        if username:
+            logger.info(f"🗑  Session {session_id} deleted by username={username}")
+        else:
+            logger.info(f"🗑  Session {session_id} deleted")
         return {"status": "deleted"}
     raise HTTPException(404, "Session not found")
 

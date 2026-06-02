@@ -134,6 +134,20 @@ uvicorn backend.api.main:app --reload --port 8000
 
 ---
 
+## Features & Integrations (ระบบที่เพิ่มเติมเข้ามา)
+
+### 1. ระบบข้อมูลระบุตัวตนและบันทึกประวัติผู้ใช้งาน (Username Logging & Attribution)
+- วิดเจ็ต **User Profile** ดีไซน์ Glassmorphic ในแถบ Topbar สำหรับระบุตัวตนของผู้ส่งงานแปลงไฟล์
+- แนบข้อมูล `username` ในรูปแบบ Form Data ไปกับการแปลงไฟล์ (`POST /convert`) และลบเซสชัน (`DELETE /session/{session_id}`)
+- ระบบ Backend (`logger.py`) ดึงข้อมูลผู้ใช้จาก Log output ด้วย regex และจัดเก็บใน JSON buffer เพื่อให้ Admin Console ดึงไปเก็บลงฐานข้อมูลล็อกระบบหลัก
+
+### 2. ระบบติดตามผู้ใช้งานออนไลน์แบบ Real-time (Active Presence Tracking)
+- ฝัง WebSocket (`presence-user.js`) เพื่อเชื่อมต่อไปยังระบบ Presence Server ของ Admin Console Backend
+- รายงานสถานะผู้ใช้ออนไลน์ หน้าเว็บที่ทำงานอยู่ (Page) และเวลาเชื่อมต่อให้ระบบกลางรับทราบแบบ Real-time
+- ปรับปรุงและอัปเดตชื่อผู้ใช้ออนไลน์บน Dashboard ทันทีเมื่อมีการพิมพ์แก้ไขชื่อบน Topbar
+
+---
+
 ## Database Support
 
 รองรับ source database:

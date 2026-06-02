@@ -22,6 +22,14 @@
       : (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
           ? 'http://localhost:8000'
           : 'https://ba-tool-backend.onrender.com');
+
+    var injectedAdmin = '%%ADMIN_API_BASE%%';
+    window.ADMIN_API_BASE = localStorage.getItem('ba_admin_api_url') || 
+      (injectedAdmin.indexOf('%%') === -1
+        ? injectedAdmin.replace(/\/$/, '')
+        : (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+            ? 'http://localhost:8000'
+            : 'https://admin-console-for-batool.onrender.com'));
   })();
 </script>
 </head>
@@ -60,6 +68,7 @@
       </div>
     </div>
 
+<<<<<<< HEAD
     <div class="topbar-right">
       <div class="controls">
         <a class="admin-console-btn" href="https://admin-console-for-batool-91pz.vercel.app/" target="_blank" title="Admin Console">
@@ -67,7 +76,9 @@
             <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
             <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
           </svg>
+          Admin Console
         </a>
+>>>>>>> 5856cd43acb18f242941cd869df0ae505f71e3de
 
         <div class="theme-toggle" role="toolbar" aria-label="Theme">
           <button class="theme-toggle-btn" id="btnDark" onclick="setTheme('dark')" title="Dark mode">🌙</button>

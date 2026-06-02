@@ -38,6 +38,14 @@ class InMemoryLogHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         global _LOG_COUNTER
         try:
+            username = None
+            msg = record.getMessage()
+            if isinstance(msg, str):
+                import re
+                match = re.search(r"\busername=([^\s,;]+)", msg)
+                if match:
+                    username = match.group(1)
+
             source_file = _make_source_file(record)
             with _LOG_LOCK:
                 _LOG_COUNTER += 1
@@ -45,9 +53,10 @@ class InMemoryLogHandler(logging.Handler):
                     "id":          _LOG_COUNTER,
                     "timestamp":   datetime.fromtimestamp(record.created).strftime("%Y-%m-%d %H:%M:%S"),
                     "level":       record.levelname,
-                    "message":     record.getMessage(),
+                    "message":     msg,
                     "name":        record.name,
                     "source_file": source_file,
+                    "username":    username,
                 }
                 _LOG_BUFFER.append(entry)
 

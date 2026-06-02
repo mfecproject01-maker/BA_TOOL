@@ -275,6 +275,11 @@ async function sendSQLToBackend(sqlFiles) {
   form.append('source_db', sourceDb);
   form.append('dest_db',   destDb);
 
+  const username = getSavedUsername();
+  if (username) {
+    form.append('username', username);
+  }
+
   try {
     const res = await fetchWithApiFallback('/convert', { method: 'POST', body: form });
 
@@ -463,7 +468,7 @@ async function fetchResult() {
 async function deleteSession(silent = false) {
   if (!sessionId) return;
   try {
-    await fetchWithApiFallback(`/session/${sessionId}`, { method: 'DELETE' });
+    await fetchWithApiFallback(`/session/${sessionId}?username=${encodeURIComponent(getSavedUsername())}`, { method: 'DELETE' });
     if (!silent) showStatus('convertStatus', 'success', '✓ ลบ session แล้ว');
   } catch {}
   sessionId = null;
@@ -1827,6 +1832,7 @@ async function checkMaintenance() {
 
 window.addEventListener('DOMContentLoaded', () => {
   setTheme(localStorage.getItem('theme') || 'dark');
+  initUsername();
   checkMaintenance();
   checkHealth();
   loadDbPairs();
@@ -2121,7 +2127,7 @@ function renderFKErrors(fkErrors) {
 window.addEventListener('beforeunload', () => {
   if (sessionId) {
     try {
-      fetch(`${API_BASE}/session/${sessionId}`, { method: 'DELETE', keepalive: true });
+      fetch(`${API_BASE}/session/${sessionId}?username=${encodeURIComponent(getSavedUsername())}`, { method: 'DELETE', keepalive: true });
     } catch {}
   }
 });
@@ -2392,4 +2398,119 @@ function switchRefTab(tab) {
     document.getElementById(tabs[t]) ?.classList.toggle('active', t === tab);
     document.getElementById(panes[t])?.classList.toggle('active', t === tab);
   });
+}
+
+// ── Username Tracking Helpers ──────────────────────────────
+function initUsername() {
+  const name = getSavedUsername();
+  const input = document.getElementById('usernameInput');
+  if (input) {
+    input.value = name;
+  }
+  renderUsernameState();
+}
+
+function saveUsername(username) {
+  username = (username || '').trim();
+  try {
+    if (username) {
+      const sessionObj = { user_id: username, id: username };
+      localStorage.setItem('ba_session', JSON.stringify(sessionObj));
+    } else {
+      localStorage.removeItem('ba_session');
+    }
+    // Dispatch custom event to let presence-user.js reconnect and update the Admin Console instantly
+    window.dispatchEvent(new Event('ba_username_changed'));
+    renderUsernameState();
+  } catch (e) {
+    console.error('Failed to save username:', e);
+  }
+}
+
+function getSavedUsername() {
+  try {
+    const session = JSON.parse(
+      localStorage.getItem('ba_session') || sessionStorage.getItem('ba_session') || 'null'
+    );
+    return session?.user_id || '';
+  } catch {
+    return '';
+  }
+}
+
+function renderUsernameState() {
+  const name = getSavedUsername();
+  const badge = document.getElementById('userActiveBadge');
+  const inputWrapper = document.getElementById('userInputWrapper');
+  const displayName = document.getElementById('userDisplayName');
+  const avatarCircle = document.getElementById('userAvatarCircle');
+
+  if (name) {
+    if (displayName) displayName.textContent = name;
+    if (avatarCircle) {
+      // Get initials
+      const parts = name.split(/[\s_-]+/);
+      let initials = '';
+      if (parts.length > 1) {
+        initials = (parts[0][0] + parts[1][0]).toUpperCase();
+      } else {
+        initials = name.slice(0, 2).toUpperCase();
+      }
+      avatarCircle.textContent = initials;
+      // Apply beautiful custom hash-based color gradient
+      avatarCircle.style.background = getAvatarGradient(name);
+    }
+    
+    // Show badge state, hide input state
+    badge?.classList.remove('hidden');
+    inputWrapper?.classList.add('hidden');
+  } else {
+    // Hide badge state, show input state to ask for username
+    badge?.classList.add('hidden');
+    inputWrapper?.classList.remove('hidden');
+  }
+}
+
+function enableNameEditing() {
+  const badge = document.getElementById('userActiveBadge');
+  const inputWrapper = document.getElementById('userInputWrapper');
+  const input = document.getElementById('usernameInput');
+
+  badge?.classList.add('hidden');
+  inputWrapper?.classList.remove('hidden');
+  input?.focus();
+  input?.select();
+}
+
+function disableNameEditing() {
+  // If a username exists, switch back to the active badge state on blur
+  const name = getSavedUsername();
+  const input = document.getElementById('usernameInput');
+  
+  // Clean empty input
+  if (input && !input.value.trim()) {
+    saveUsername('');
+  }
+  
+  if (name) {
+    renderUsernameState();
+  }
+}
+
+function getAvatarGradient(name) {
+  const gradients = [
+    'linear-gradient(135deg, #00c985 0%, #168cff 100%)',   // Green -> Blue
+    'linear-gradient(135deg, #ff007f 0%, #7f00ff 100%)',   // Pink -> Purple
+    'linear-gradient(135deg, #ff9900 0%, #ff5500 100%)',   // Orange -> Red
+    'linear-gradient(135deg, #00f2fe 0%, #4facfe 100%)',   // Cyan -> Dark Blue
+    'linear-gradient(135deg, #b224ef 0%, #7579ff 100%)',   // Magenta -> Indigo
+    'linear-gradient(135deg, #f857a6 0%, #ff5858 100%)'    // Coral -> Salmon
+  ];
+  if (!name) return gradients[0];
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = name.charCodeAt(i) + ((hash << 5) - hash);
+  }
+  const index = Math.abs(hash) % gradients.length;
+  return gradients[index];
 }
