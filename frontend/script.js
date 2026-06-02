@@ -1375,7 +1375,8 @@ function showUsernameModal() {
   const save = document.getElementById('saveUsernameBtn');
   const avatar = document.getElementById('modalAvatar');
   const feedback = document.getElementById('usernameFeedback');
-  if (input) { input.value = ''; input.focus(); }
+  const current = localStorage.getItem('username') || '';
+  if (input) { input.value = current; input.focus(); }
   if (save) save.disabled = true;
 
   function onInput() {
@@ -1426,7 +1427,13 @@ function saveUsername(username) {
 
   // close modal if present
   const modal = document.getElementById('usernameModal');
-  if (modal) { modal.style.display = 'none'; modal.setAttribute('aria-hidden','true'); }
+  if (modal) {
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden','true');
+  }
+  if (document.activeElement instanceof HTMLElement) {
+    document.activeElement.blur();
+  }
 }
 
 function handleLocalUsernameChange(name) {
