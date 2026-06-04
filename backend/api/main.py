@@ -131,7 +131,7 @@ if _ADMIN_ORIGIN:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_ORIGINS,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$|^https://ba-tool(-[a-z0-9]+)*-mfecproject01-makers-projects\.vercel\.app$|^https://ba-tool-nine\.vercel\.app$",
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Content-Type"],
