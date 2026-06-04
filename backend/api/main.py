@@ -112,6 +112,12 @@ _ORIGINS = os.getenv(
     "http://localhost:5500,http://127.0.0.1:5500,http://localhost:8000,http://127.0.0.1:8000,null"
 ).split(",")
 
+# hardcode production URLs
+_ORIGINS += [
+    "https://ba-tool-4bkpuk5mj-mfecproject01-makers-projects.vercel.app",
+    "https://ba-tool-nine.vercel.app",
+]
+
 # VERCEL_ORIGIN: frontend production URL (ตั้งใน Railway/Render env)
 _VERCEL_ORIGIN = os.getenv("VERCEL_ORIGIN", "").strip().rstrip("/")
 if _VERCEL_ORIGIN:
