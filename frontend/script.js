@@ -18,7 +18,7 @@ function resolveApiBase() {
   if (host === 'localhost' || host === '127.0.0.1') return 'http://localhost:8000';
 
   // production → ใช้ Render backend
-  return 'https://ba-tool-backend.onrender.com';
+  return 'https://ba-tool-yvb0.onrender.com';
 }
 
 let API_BASE = resolveApiBase();
