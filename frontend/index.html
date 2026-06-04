@@ -21,7 +21,7 @@
       ? injected.replace(/\/$/, '')
       : (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
           ? 'http://localhost:8000'
-          : 'https://ba-tool-backend.onrender.com');
+          : 'https://ba-tool-yvb0.onrender.com');
 
     var injectedAdmin = '%%ADMIN_API_BASE%%';
     window.ADMIN_API_BASE = localStorage.getItem('ba_admin_api_url') || 
@@ -29,7 +29,7 @@
         ? injectedAdmin.replace(/\/$/, '')
         : (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
             ? 'http://localhost:8000'
-            : 'https://admin-console-for-batool.onrender.com'));
+            : 'https://admin-console-batool.onrender.com'));
   })();
 </script>
 </head>
