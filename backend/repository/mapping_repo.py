@@ -114,29 +114,16 @@ class MappingRepository:
         conn = get_connection(self.db_name)
         try:
             with conn.cursor() as cur:
-                # source = DB ที่มีใน datatype_raw_mapping (มี type ให้แปลง)
-                cur.execute("""
-                    SELECT DISTINCT dt.key
-                    FROM datatype_raw_mapping drm
-                    JOIN database_records dt ON dt.id = drm.db_id
-                    ORDER BY dt.key
-                """)
-                source_rows = cur.fetchall()
-
-                # dest = DB ทุกตัวที่รู้จัก (ทั้ง source และ dest side)
+                # Get all enabled databases
                 cur.execute("""
                     SELECT DISTINCT key FROM database_records
-                    WHERE id IN (
-                        SELECT DISTINCT db_id FROM datatype_raw_mapping
-                        UNION
-                        SELECT DISTINCT db_id FROM datatype_mapping
-                    )
+                    WHERE enabled = true
                     ORDER BY key
                 """)
                 all_rows = cur.fetchall()
 
-            sources = [r[0] for r in source_rows]
-            all_dbs = [r[0] for r in all_rows]
+            sources = [r[0] for r in all_rows]
+            all_dbs = sources
 
             return [
                 {"source_db": src, "dest_db": dst}
