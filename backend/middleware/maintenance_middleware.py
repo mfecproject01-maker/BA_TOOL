@@ -46,13 +46,8 @@ def _fetch_maintenance_state() -> tuple[bool, str]:
 
 
 def _get_maintenance_state() -> tuple[bool, str]:
-    now = time.monotonic()
-    if now - _cache["updated_at"] > _CACHE_TTL:
-        enabled, reason = _fetch_maintenance_state()
-        _cache["enabled"]    = enabled
-        _cache["reason"]     = reason
-        _cache["updated_at"] = now
-    return _cache["enabled"], _cache["reason"]
+    return _fetch_maintenance_state()
+
 
 
 # Paths ที่ยังให้ผ่านได้แม้ maintenance
