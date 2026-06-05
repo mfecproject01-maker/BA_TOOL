@@ -209,17 +209,9 @@ def _make_export_filename(table_names: list[str], ext: str) -> str:
 
 def _load_mapping(source_db: str | None, dest_db: str | None) -> dict:
     """
-    โหลด mapping ตาม db pair พร้อม in-process TTL cache (5 นาที)
+    โหลด mapping ตาม db pair จาก DB แบบ real-time
     - โหลดจาก DB เสมอตาม source_db ที่ระบุ เพื่อป้องกันข้อมูลปนกัน
     """
-    cache_key = (source_db, dest_db)
-    cached = _mapping_cache.get(cache_key)
-    if cached:
-        mapping, loaded_at = cached
-        if datetime.now() - loaded_at < _MAPPING_TTL:
-            logger.debug(f"📦 Mapping cache hit: {source_db} → {dest_db}")
-            return mapping
-
     repo = MappingRepository()
 
     # 1. ถ้ามีทั้งคู่ -> ดึง per-pair mapping
@@ -228,7 +220,6 @@ def _load_mapping(source_db: str | None, dest_db: str | None) -> dict:
             pair_mapping = repo.get_by_db_pair(source_db, dest_db)
             if pair_mapping:
                 logger.info(f"📦 Pair mapping loaded: {source_db} → {dest_db} ({len(pair_mapping)} types)")
-                _mapping_cache[cache_key] = (pair_mapping, datetime.now())
                 return pair_mapping
         except Exception as e:
             logger.warning(f"⚠️ Failed to load pair mapping ({source_db}→{dest_db}): {e}")
@@ -238,7 +229,6 @@ def _load_mapping(source_db: str | None, dest_db: str | None) -> dict:
         try:
             source_mapping = repo.get_all(source_db=source_db)
             logger.info(f"📦 Source mapping loaded for {source_db} ({len(source_mapping)} types)")
-            _mapping_cache[cache_key] = (source_mapping, datetime.now())
             return source_mapping
         except Exception as e:
             logger.error(f"❌ Failed to load source mapping for {source_db}: {e}")
@@ -246,8 +236,8 @@ def _load_mapping(source_db: str | None, dest_db: str | None) -> dict:
     # 3. Fallback สุดท้าย (ไม่แนะนำ) -> ดึงทั้งหมดแบบระบุไม่ได้ (อาจปนกัน)
     logger.warning("⚠️ No source_db specified, loading all mappings (potential mix-up)")
     fallback = repo.get_all()
-    _mapping_cache[cache_key] = (fallback, datetime.now())
     return fallback
+
 
 # ── API ───────────────────────────────────────────────────
 
