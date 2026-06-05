@@ -32,8 +32,9 @@ _FK_LINE = re.compile(
 
 
 def _clean_name(s: str) -> str:
-    """ลบ quote ทุกชนิด + lowercase"""
-    return re.sub(r'[\"\'\[\]]', '', s).strip().lower()
+    """ลบ quote ทุกชนิด + backticks + lowercase"""
+    return re.sub(r'[\"\'\[\]`]', '', s).strip().lower()
+
 
 
 def parse_sql(sql_text: str) -> list[dict]:
