@@ -1,59 +1,69 @@
 /**
- * presence.js  —  User-side WebSocket tracker
- * Drop <script src="presence.js"></script> on every page the user visits.
- * Works for both logged-in users and guests.
+ * presence-user.js  —  User-side WebSocket tracker for BA Tool
+ * Detects current app state and reports meaningful page names to Admin Console.
  */
 
 (function () {
   'use strict';
 
-  // ── ใช้ Admin Console backend เพื่อส่งสถานะ (Presence) ──────────────────
-  // window.ADMIN_API_BASE ถูกกำหนดใน index.html ก่อน script นี้โหลดเสมอ
-  // production: https://admin-console-batool.onrender.com
-  // local dev:  http://localhost:8000 (หรือพอร์ตอื่นๆ ตามการตั้งค่า)
   function resolveWsUrl() {
     const base = (window.ADMIN_API_BASE || '').trim().replace(/\/$/, '');
-    if (base) {
-      // แปลง http(s):// → ws(s)://
-      return base.replace(/^http/, 'ws') + '/ws/presence';
-    }
-    // fallback local dev / production
+    if (base) return base.replace(/^http/, 'ws') + '/ws/presence';
     const isLocal = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
     const host = isLocal ? 'localhost:8000' : 'admin-console-batool.onrender.com';
     return (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + host + '/ws/presence';
   }
 
-  const WS_URL = resolveWsUrl();
-
-  const PING_INTERVAL = 25_000;   // ms — must be < HEARTBEAT_INTERVAL on server
+  const WS_URL         = resolveWsUrl();
+  const PING_INTERVAL  = 25_000;
   const RECONNECT_DELAY = 5_000;
 
-  let ws = null;
-  let pingTimer = null;
+  let ws             = null;
+  let pingTimer      = null;
   let reconnectTimer = null;
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  // ── Detect current BA Tool page/state ────────────────────────────────────
 
-  function getUserId() {
-    // Adjust to however your app stores the logged-in user id
+  function getCurrentPage() {
     try {
-      const session = JSON.parse(
-        localStorage.getItem('ba_session') || sessionStorage.getItem('ba_session') || 'null'
-      );
-      return session?.user_id ?? session?.id ?? null;
+      // มีผลลัพธ์ mapping แล้ว (sessionCard แสดงอยู่)
+      const sessionCard = document.getElementById('sessionCard');
+      if (sessionCard && sessionCard.style.display !== 'none' && sessionCard.style.display !== '') {
+        return window._converted ? 'BA Tool: Converted' : 'BA Tool: Mapping Result';
+      }
+      // กำลัง bulk export
+      const bulkSection = document.getElementById('bulkSection');
+      if (bulkSection && bulkSection.classList.contains('visible')) {
+        return 'BA Tool: Bulk Export';
+      }
+      // เปิด Reference panel
+      const refPanel = document.getElementById('refPanel');
+      if (refPanel && refPanel.classList.contains('open')) {
+        return 'BA Tool: Reference';
+      }
+      // มีไฟล์ upload แล้วแต่ยังไม่ map
+      if (window._uploadedFiles && window._uploadedFiles.length > 0) {
+        return 'BA Tool: File Uploaded';
+      }
+      // หน้าหลัก
+      return 'BA Tool: Home';
     } catch {
-      return null;
+      return 'BA Tool';
     }
+  }
+
+  function getUsername() {
+    return localStorage.getItem('username') ||
+           sessionStorage.getItem('username') ||
+           null;
   }
 
   function buildPayload() {
     return {
       event:      'user_online',
-      user_id:    getUserId(),
-      username:   localStorage.getItem('username') || null,
-      session_id: window.sessionId || null,
-      page:       location.pathname + location.search,
-      user_agent: navigator.userAgent,
+      user_id:    getUsername(),
+      page:       getCurrentPage(),
+      user_agent: navigator.userAgent.slice(0, 80),
       timestamp:  new Date().toISOString(),
     };
   }
@@ -62,7 +72,7 @@
 
   function connect() {
     clearTimeout(reconnectTimer);
-    if (ws && ws.readyState < 2) return; // already open / connecting
+    if (ws && ws.readyState < 2) return;
 
     ws = new WebSocket(WS_URL);
 
@@ -74,7 +84,7 @@
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
-        if (msg.event === 'pong') return; // heartbeat ack
+        if (msg.event === 'pong') return;
       } catch { /* ignore */ }
     };
 
@@ -95,91 +105,62 @@
     }, PING_INTERVAL);
   }
 
-  function stopPing() {
-    clearInterval(pingTimer);
-  }
+  function stopPing() { clearInterval(pingTimer); }
 
-  // ── Page change tracking (SPA support) ───────────────────────────────────
+  // ── Page change tracking ──────────────────────────────────────────────────
 
   function notifyPageChange() {
     if (ws?.readyState === WebSocket.OPEN) {
       ws.send(JSON.stringify({
         event: 'page_change',
-        page:  location.pathname + location.search,
-        username: localStorage.getItem('username') || null,
-        session_id: window.sessionId || null,
+        page:  getCurrentPage(),
       }));
     }
   }
 
-  // Presence state reporting (ACTIVE / BACKGROUND /INACTIVE)
-  let inactivityTimer = null;
-  const INACTIVE_DELAY = 3000; // 3s debounce
+  // ── Observe DOM changes to detect state changes ───────────────────────────
+  // เมื่อ sessionCard หรือ bulkSection เปลี่ยน visibility → แจ้ง page change
 
-  function sendPresence(status) {
-    const payload = {
-      event: 'presence_update',
-      status,
-      username: localStorage.getItem('username') || null,
-      session_id: window.sessionId || null,
-      last_activity: new Date().toISOString(),
-      page: location.pathname + location.search,
-    };
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(payload));
-    } else {
-      // best-effort HTTP fallback
-      try {
-        if (window.API_BASE) fetch(window.API_BASE + '/presence', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) }).catch(()=>{});
-      } catch(e){}
-    }
+  function observeStateChanges() {
+    const targets = ['sessionCard', 'bulkSection', 'refPanel'];
+    const observer = new MutationObserver(() => notifyPageChange());
+
+    targets.forEach(id => {
+      const el = document.getElementById(id);
+      if (el) observer.observe(el, { attributes: true, attributeFilter: ['style', 'class'] });
+    });
   }
 
+  // รอให้ DOM พร้อมก่อน observe
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', observeStateChanges);
+  } else {
+    observeStateChanges();
+  }
+
+  // ── Visibility / activity tracking ───────────────────────────────────────
+
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      if (inactivityTimer) { clearTimeout(inactivityTimer); inactivityTimer = null; }
-      sendPresence('ACTIVE');
-    } else {
-      sendPresence('BACKGROUND');
-      inactivityTimer = setTimeout(() => {
-        if (document.visibilityState !== 'visible') sendPresence('INACTIVE');
-      }, INACTIVE_DELAY);
-    }
-  }, { passive:true });
+    if (document.visibilityState === 'visible') notifyPageChange();
+  }, { passive: true });
 
-  ['mousemove','keydown','click','touchstart'].forEach(ev => {
-    window.addEventListener(ev, () => {
-      if (inactivityTimer) { clearTimeout(inactivityTimer); inactivityTimer = null; }
-      sendPresence('ACTIVE');
-    }, { passive:true });
-  });
-
-  // Intercept pushState / replaceState for SPA navigation
+  // SPA navigation support
   ['pushState', 'replaceState'].forEach(method => {
     const orig = history[method];
-    history[method] = function (...args) {
-      orig.apply(this, args);
-      notifyPageChange();
-    };
+    history[method] = function (...args) { orig.apply(this, args); notifyPageChange(); };
   });
   window.addEventListener('popstate', notifyPageChange);
 
-  // ── Cleanup on tab close ─────────────────────────────────────────────────
-
-  window.addEventListener('beforeunload', () => {
-    stopPing();
-    ws?.close();
-  });
+  // ── Username change ───────────────────────────────────────────────────────
 
   window.addEventListener('ba_username_changed', () => {
-    if (ws) {
-      ws.close();
-      // wait a tiny bit for the close event to fire and clear the timer, then reconnect
-      setTimeout(connect, 100);
-    } else {
-      connect();
-    }
+    if (ws) { ws.close(); setTimeout(connect, 100); }
+    else connect();
   });
+
+  // ── Cleanup ───────────────────────────────────────────────────────────────
+
+  window.addEventListener('beforeunload', () => { stopPing(); ws?.close(); });
 
   // ── Boot ──────────────────────────────────────────────────────────────────
 
