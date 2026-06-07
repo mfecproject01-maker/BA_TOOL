@@ -60,6 +60,11 @@ let uploadedFiles = [];  // { name, type, fileObj }
 let sessionId     = null;
 let converted     = false;
 
+// Expose state to presence-user.js for page detection
+Object.defineProperty(window, '_uploadedFiles', { get: () => uploadedFiles });
+Object.defineProperty(window, '_sessionId',     { get: () => sessionId });
+Object.defineProperty(window, '_converted',     { get: () => converted });
+
 // ─── File Input / Drag & Drop ──────────────────────────────
 document.getElementById('fileInput').addEventListener('change', e => handleFiles(e.target.files));
 
