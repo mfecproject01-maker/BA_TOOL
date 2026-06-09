@@ -12,7 +12,7 @@ import os
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -29,6 +29,13 @@ from backend.exporter.excel_exporter import export_confluent_xlsx, export_table_
 
 # Logging is configured once in backend.config.logger (imported below).
 # Do not call basicConfig here to avoid duplicate handlers.
+
+# ── Startup tracking ─────────────────────────────────────
+# Set to True only after lifespan startup completes successfully.
+# /health checks this flag so it can return 503 during cold-start init.
+_startup_complete: bool = False
+_startup_error: str | None = None
+_startup_time: str | None = None   # ISO-8601 UTC
 
 # ── Constants ────────────────────────────────────────────
 MAX_FILE_SIZE_MB = 10
@@ -62,25 +69,27 @@ limiter = Limiter(key_func=get_remote_address)
 # ── Lifecycle ─────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("🚀 [1/2] Initialization: Starting FastAPI application...")
-    
+    global _startup_complete, _startup_error, _startup_time
+    logger.info("[HEALTH] 🚀 [1/2] Initialization: Starting FastAPI application...")
+
     try:
-        # ระบุว่ากำลังทำอะไร
-        logger.info("📡 Connecting to PostgreSQL database pool...")
+        logger.info("[HEALTH] 📡 Connecting to PostgreSQL database pool...")
         init_db_pool()
-        
-        # อธิบายเหตุผล (Rationale) ของการเปลี่ยนแปลง 
         logger.info(
-            "✅ Database pool initialized. "
-            "Note: Mapping loading deferred to request-time to optimize startup speed ."
+            "[HEALTH] ✅ Database pool initialized. "
+            "Note: Mapping loading deferred to request-time to optimize startup speed."
         )
-        
     except Exception as e:
-        # ใส่ Error Category หรือจุดที่เกิดปัญหาให้ชัด
-        logger.error(f"❌ Critical Failure: Application failed to boot during Database Setup. Error: {e}", exc_info=True)
+        _startup_error = str(e)
+        logger.error(
+            "[HEALTH] ❌ Critical Failure: Application failed to boot during Database Setup. Error: %s",
+            e, exc_info=True,
+        )
         raise
-        
-    logger.info("🚀 [2/2] Startup Complete: Server is ready to accept connections.")
+
+    _startup_complete = True
+    _startup_time = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    logger.info("[HEALTH] 🚀 [2/2] Startup Complete: Server is ready to accept connections.")
 
     _cleanup_task = asyncio.create_task(_session_cleanup_loop())
     logger.info("🕐 Background session cleanup task started (interval: 5 min)")
@@ -257,9 +266,52 @@ def load_database_support_matrix() -> dict:
         raise HTTPException(status_code=500, detail="Unable to read database support matrix")
 @app.get("/health")
 def health():
+    """
+    [HEALTH] ตรวจสอบสถานะ BA_TOOL service
+    - 503 ถ้า startup ยังไม่เสร็จ หรือ DB pool ว่างเปล่า
+    - 200 ok ถ้าทุก DB pool ใช้งานได้
+    - 200 degraded ถ้า pool มีแต่บาง DB มีปัญหา
+    ไม่มี false-positive: all([]) == True ถูกป้องกันด้วยการเช็ค db_names
+    """
     from backend.config.db import get_connection, release_connection, get_db_names
+
+    timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    # ── Guard: startup ยังไม่เสร็จ ────────────────────────────────────────
+    if not _startup_complete:
+        detail = _startup_error or "Application is still initializing"
+        logger.warning("[HEALTH] 503 — startup not complete: %s", detail)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status":    "error",
+                "detail":    detail,
+                "db":        {},
+                "sessions":  len(result_cache),
+                "startup":   "pending",
+                "timestamp": timestamp,
+            },
+        )
+
+    # ── Guard: DB pool ว่างเปล่า (init ล้มเหลว หรือยังไม่ถูกเรียก) ───────
+    db_names = get_db_names()
+    if not db_names:
+        logger.error("[HEALTH] 503 — DB pool not initialized (no pools registered)")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status":    "error",
+                "detail":    "DB pool not initialized",
+                "db":        {},
+                "sessions":  len(result_cache),
+                "startup":   "complete",
+                "timestamp": timestamp,
+            },
+        )
+
+    # ── Probe every registered pool ───────────────────────────────────────
     db_status: dict[str, str] = {}
-    for db_name in get_db_names():
+    for db_name in db_names:
         conn = None
         try:
             conn = get_connection(db_name)
@@ -268,14 +320,30 @@ def health():
             db_status[db_name] = "ok"
         except Exception as e:
             db_status[db_name] = f"error: {e}"
+            logger.warning("[HEALTH] DB probe failed for '%s': %s", db_name, e)
         finally:
             if conn is not None:
                 try:
                     release_connection(conn, db_name)
                 except Exception:
                     pass
-    overall = "ok" if all(v == "ok" for v in db_status.values()) else "degraded"
-    return {"status": overall, "sessions": len(result_cache), "db": db_status}
+
+    all_ok  = all(v == "ok" for v in db_status.values())
+    overall = "ok" if all_ok else "degraded"
+
+    logger.info(
+        "[HEALTH] %s — sessions=%d dbs=%s",
+        overall.upper(), len(result_cache),
+        {k: v[:20] for k, v in db_status.items()},
+    )
+
+    return {
+        "status":    overall,
+        "sessions":  len(result_cache),
+        "db":        db_status,
+        "startup":   "complete",
+        "timestamp": timestamp,
+    }
 
 
 @app.get("/database-support")
