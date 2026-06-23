@@ -168,6 +168,10 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["GET", "POST", "DELETE"],
     allow_headers=["Content-Type"],
+    # ต้อง expose ออกมาเอง ไม่งั้น browser จะ block ไม่ให้ fetch() เห็น header เหล่านี้ข้าม origin
+    # Content-Length: ใช้คำนวณ % progress ตอนดาวน์โหลด/export
+    # Content-Disposition: เผื่อ frontend อยากอ่านชื่อไฟล์จาก header ในอนาคต
+    expose_headers=["Content-Length", "Content-Disposition"],
 )
 
 app.add_middleware(MaintenanceMiddleware)
@@ -601,10 +605,11 @@ def export_all(session_id: str, tables: List[str] = Query(default=None)):
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{_make_export_filename(list(selected.keys()), "xlsx")}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{_make_export_filename(list(selected.keys()), "xlsx")}"',
+            "Content-Length": str(buf.getbuffer().nbytes),
+        },
     )
-
-@app.get("/export/{session_id}/xlsx/{table_name}")
 def export_one(session_id: str, table_name: str):
     data = get_cached_data(session_id)
     columns = data["tables"].get(table_name)
@@ -630,7 +635,10 @@ def export_one(session_id: str, table_name: str):
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{_make_export_filename([table_name], "xlsx")}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{_make_export_filename([table_name], "xlsx")}"',
+            "Content-Length": str(buf.getbuffer().nbytes),
+        },
     )
 
 @app.get("/export/{session_id}/csv")
@@ -644,7 +652,10 @@ def export_all_csv_endpoint(session_id: str, tables: List[str] = Query(default=N
     return StreamingResponse(
         buf,
         media_type="text/csv; charset=utf-8-sig",
-        headers={"Content-Disposition": f'attachment; filename="{_make_export_filename(list(selected.keys()), "csv")}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{_make_export_filename(list(selected.keys()), "csv")}"',
+            "Content-Length": str(buf.getbuffer().nbytes),
+        },
     )
 
 @app.get("/export/{session_id}/csv/{table_name}")
@@ -659,7 +670,10 @@ def export_one_csv(session_id: str, table_name: str):
     return StreamingResponse(
         buf,
         media_type="text/csv; charset=utf-8-sig",
-        headers={"Content-Disposition": f'attachment; filename="{_make_export_filename([table_name], "csv")}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{_make_export_filename([table_name], "csv")}"',
+            "Content-Length": str(buf.getbuffer().nbytes),
+        },
     )
 
 # ── Maintenance Status ────────────────────────────────────

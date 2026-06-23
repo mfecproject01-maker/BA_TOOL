@@ -54,7 +54,86 @@ async function fetchWithApiFallback(path, options) {
   throw lastErr || new Error('Unable to reach API');
 }
 
-// ── State ──────────────────────────────────────────────────
+// ─── Export/Download progress bar (Fetch streaming) ───────
+// ใช้ ReadableStream + Content-Length เพื่อรายงาน progress แบบ real-time
+// (ไม่ใช้ Axios เพราะโปรเจกต์นี้ใช้ native fetch ทั้งหมดอยู่แล้ว)
+
+function showExportProgress() {
+  const bar = document.getElementById('exportProgress');
+  if (!bar) return;
+  bar.classList.remove('fade-out');
+  bar.classList.add('visible');
+  bar.setAttribute('aria-hidden', 'false');
+  updateExportProgress(0, true); // เริ่มที่ indeterminate จนกว่าจะรู้ total bytes
+}
+
+function updateExportProgress(percent, indeterminate = false) {
+  const fill  = document.getElementById('exportProgressFill');
+  const label = document.getElementById('exportProgressLabel');
+  if (!fill || !label) return;
+  fill.classList.toggle('indeterminate', indeterminate);
+  if (!indeterminate) {
+    const clamped = Math.max(0, Math.min(100, Math.round(percent)));
+    fill.style.width = clamped + '%';
+    label.textContent = clamped + '%';
+  } else {
+    label.textContent = '...';
+  }
+}
+
+function hideExportProgress(immediate = false) {
+  const bar = document.getElementById('exportProgress');
+  if (!bar) return;
+  if (immediate) {
+    bar.classList.remove('visible', 'fade-out');
+    bar.setAttribute('aria-hidden', 'true');
+    return;
+  }
+  // เมื่อถึง 100% ให้ค้างไว้สักครู่ให้ผู้ใช้เห็น แล้ว fade out
+  updateExportProgress(100, false);
+  setTimeout(() => {
+    bar.classList.add('fade-out');
+    bar.setAttribute('aria-hidden', 'true');
+    setTimeout(() => bar.classList.remove('visible', 'fade-out'), 400);
+  }, 250);
+}
+
+/**
+ * เหมือน fetchWithApiFallback แต่ stream อ่าน response.body เพื่อรายงาน progress
+ * คืนค่าเป็น Blob พร้อม progress callback ระหว่างดาวน์โหลด
+ * หมายเหตุ: ไม่แก้ business logic เดิม — แค่แทรก progress tracking รอบๆ fetch ที่มีอยู่
+ */
+async function fetchBlobWithProgress(path, options, onProgress) {
+  const res = await fetchWithApiFallback(path, options);
+  if (!res.ok) return res; // ให้ caller เดิมจัดการ error response ตามปกติ (res.ok check)
+
+  const contentLength = res.headers.get('Content-Length');
+  const total = contentLength ? parseInt(contentLength, 10) : 0;
+
+  // ถ้า browser ไม่รองรับ streaming body หรือไม่มี Content-Length ให้ fallback เป็น res.blob() ปกติ
+  if (!res.body || !res.body.getReader || !total) {
+    if (onProgress) onProgress(null); // แจ้ง caller ว่าไม่รู้ progress จริง (ให้โชว์ indeterminate)
+    const blob = await res.blob();
+    return { ok: true, status: res.status, blob };
+  }
+
+  const reader = res.body.getReader();
+  const chunks = [];
+  let received = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    received += value.length;
+    if (onProgress) onProgress(Math.round((received * 100) / total));
+  }
+
+  const blob = new Blob(chunks);
+  return { ok: true, status: res.status, blob };
+}
+
+
 let currentData   = {};  // { [tableName]: { headers, rows, fileName, fileType, backendCols? } }
 let uploadedFiles = [];  // { name, type, fileObj }
 let sessionId     = null;
@@ -818,11 +897,18 @@ async function downloadTable(key, fmt) {
 
   if (t.backendCols && sessionId && fmt === 'csv') {
     setLoading(true);
+    showExportProgress();
     try {
-      const res = await fetchWithApiFallback(`/export/${sessionId}/csv/${key}`);
-      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
-      triggerDownload(await res.blob(), `${key}.csv`);
+      const res = await fetchBlobWithProgress(
+        `/export/${sessionId}/csv/${key}`,
+        undefined,
+        pct => updateExportProgress(pct, pct === null)
+      );
+      if (!res.ok) throw new Error((await res.json?.().catch(() => ({})) || {}).detail || res.statusText);
+      triggerDownload(res.blob, `${key}.csv`);
+      hideExportProgress();
     } catch (err) {
+      hideExportProgress(true);
       showStatus('convertStatus', 'error', '❌ ' + err.message);
     } finally { setLoading(false); }
     return;
@@ -1243,11 +1329,46 @@ function showDuplicateModal(issues, files) {
 function renderFileChip(name, type) {
   const div = document.createElement('div');
   div.className = 'file-item';
+  div.dataset.fileName = name; // ใช้จับคู่กับ uploadedFiles[] ตอนลบ
   div.innerHTML = `
     <span class="file-type-badge ${type}">${type.toUpperCase()}</span>
     <span class="file-name" title="${name}">${name}</span>
-    <button class="file-remove" onclick="this.parentElement.remove()">✕</button>`;
+    <button class="file-remove" onclick="removeUploadedFile('${name.replace(/'/g, "\\'")}', this)">✕</button>`;
   document.getElementById('fileList').appendChild(div);
+}
+
+// ─── ลบไฟล์ที่อัปโหลด: sync state + DOM + reset input ──────
+// แก้บัค: ก่อนหน้านี้ปุ่ม ✕ ลบแค่ DOM chip แต่ไม่ลบจาก uploadedFiles[]/currentData{}
+// และไม่ reset fileInput.value ทำให้เลือกไฟล์เดิมซ้ำไม่ได้ (browser มองว่าค่ายังไม่เปลี่ยน)
+function removeUploadedFile(name, btnEl) {
+  // 1) ลบออกจาก state array ที่เป็นแหล่งความจริง (source of truth)
+  uploadedFiles = uploadedFiles.filter(f => f.name !== name);
+
+  // 2) ลบ parsed data ของไฟล์นี้ออกจาก currentData (กันข้อมูลค้าง/ซ้ำ)
+  const baseKey = name.replace(/\.[^/.]+$/, '');
+  Object.keys(currentData).forEach(key => {
+    const t = currentData[key];
+    if (t && (t.fileName === name || key === baseKey || key.startsWith(baseKey + '_'))) {
+      delete currentData[key];
+    }
+  });
+
+  // 3) ลบ DOM chip ออกจาก UI
+  const chip = btnEl ? btnEl.closest('.file-item') : null;
+  if (chip) chip.remove();
+
+  // 4) Reset ค่า input[type=file] เสมอ — แก้ปุ่มเดิมที่ไม่ reset
+  //    ทำให้สามารถเลือกไฟล์เดิม (ชื่อ/พาธเดียวกัน) ซ้ำได้ทันทีโดยไม่ต้อง refresh
+  const input = document.getElementById('fileInput');
+  if (input) input.value = '';
+
+  // 5) ถ้าไม่เหลือไฟล์แล้ว ให้รีเซ็ต UI ที่เกี่ยวข้องกลับสู่สถานะเริ่มต้น
+  if (uploadedFiles.length === 0) {
+    sessionId = null;
+    converted = false;
+    clearUI();
+    document.getElementById('convertBtn').disabled = true;
+  }
 }
 
 function clearUI() {
@@ -1523,6 +1644,8 @@ function showSessionExpiredOverlay() {
     // reset workspace state
     currentData = {}; uploadedFiles = []; sessionId = null; converted = false;
     document.getElementById('fileList').innerHTML = '';
+    const input = document.getElementById('fileInput');
+    if (input) input.value = ''; // กัน input ค้างค่าไฟล์เก่าเหมือนกับตอนลบไฟล์เดี่ยว
     clearUI();
     o.style.display = 'none';
     // reopen onboarding
@@ -1914,13 +2037,19 @@ async function downloadTableXLSX(tableName) {
   }
 
   setLoading(true);
+  showExportProgress();
   try {
-    const res = await fetchWithApiFallback(`/export/${sessionId}/xlsx/${tableName}`);
-    if (!res.ok) throw new Error((await res.json().catch(()=>({}))).detail || res.statusText);
-    const blob = await res.blob();
-    triggerDownload(blob, makeExportFilename([tableName], 'xlsx'));
+    const res = await fetchBlobWithProgress(
+      `/export/${sessionId}/xlsx/${tableName}`,
+      undefined,
+      pct => updateExportProgress(pct, pct === null)
+    );
+    if (!res.ok) throw new Error((await res.json?.().catch(()=>({})) || {}).detail || res.statusText);
+    triggerDownload(res.blob, makeExportFilename([tableName], 'xlsx'));
+    hideExportProgress();
     showStatus('convertStatus', 'success', `✓ ดาวน์โหลด ${tableName}_confluent.xlsx สำเร็จ`);
   } catch (err) {
+    hideExportProgress(true);
     showStatus('convertStatus', 'error', '❌ ' + err.message);
   } finally {
     setLoading(false);
@@ -2083,12 +2212,19 @@ async function doExportSelected(fmt, selectedKeys) {
   if (!selectedKeys.length) return;
   const qs  = selectedKeys.map(k => `tables=${encodeURIComponent(k)}`).join('&');
   setLoading(true);
+  showExportProgress();
   try {
-    const res = await fetchWithApiFallback(`/export/${sessionId}/${fmt}?${qs}`);
-    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
-    triggerDownload(await res.blob(), makeExportFilename(selectedKeys, fmt));
+    const res = await fetchBlobWithProgress(
+      `/export/${sessionId}/${fmt}?${qs}`,
+      undefined,
+      pct => updateExportProgress(pct, pct === null)
+    );
+    if (!res.ok) throw new Error((await res.json?.().catch(() => ({})) || {}).detail || res.statusText);
+    triggerDownload(res.blob, makeExportFilename(selectedKeys, fmt));
+    hideExportProgress();
     showStatus('convertStatus', 'success', `✓ Export ${fmt.toUpperCase()} สำเร็จ (${selectedKeys.length} tables)`);
   } catch (err) {
+    hideExportProgress(true);
     showStatus('convertStatus', 'error', '❌ ' + err.message);
   } finally {
     setLoading(false);
