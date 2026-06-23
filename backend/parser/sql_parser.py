@@ -8,25 +8,32 @@ TYPE_STOP_KEYWORDS = {
     "default", "unique", "check", "references",
     "primary", "foreign", "constraint",
     "identity", "generated", "collate", "comment",
-    "key", "index", "as",
+    "key", "index", "as", "auto_increment",
 }
 
-LINE_SKIP_KEYWORDS = {"primary", "foreign", "constraint", "unique", "check", "index", "key"}
+LINE_SKIP_KEYWORDS = {
+    "primary", "foreign", "constraint", "unique", "check", "index", "key",
+    "fulltext", "spatial", "like", "exclude", "period",
+}
 
 # [FIX-Bug] regex compile ครั้งเดียว ไม่ compile ในลูป
+_IDENTIFIER = r'(?:\"(?:[^\"]|\"\")*\"|`[^`]*`|\[[^\]]+\]|[a-zA-Z_#@$][a-zA-Z0-9_#@$]*)'
+_QUALIFIED_IDENTIFIER = rf"{_IDENTIFIER}(?:\s*\.\s*{_IDENTIFIER})*"
 _TABLE_PATTERN = re.compile(
-    r"create\s+table\s+(?:if\s+not\s+exists\s+)?([a-zA-Z0-9_.\"'\[\]]+)\s*\(",
+    rf"\bcreate\s+(?:or\s+replace\s+)?"
+    rf"(?:(?:global|local|private)\s+temporary\s+|temporary\s+|temp\s+|unlogged\s+)?table\s+"
+    rf"(?:if\s+not\s+exists\s+)?({_QUALIFIED_IDENTIFIER})\s*\(",
     re.IGNORECASE
 )
 _PAREN_CONTENT = re.compile(r"\(([^)]+)\)")
 _PK_INLINE = re.compile(r"\bPRIMARY\s+KEY\b")
 _NOT_NULL = re.compile(r"\bNOT\s+NULL\b")
 _REFERENCES = re.compile(
-    r"REFERENCES\s+([a-zA-Z0-9_.\"'\[\]]+)\s*(?:\(([^)]*)\))?",
+    rf"\bREFERENCES\s+({_QUALIFIED_IDENTIFIER})\s*(?:\(([^)]*)\))?",
     re.IGNORECASE
 )
 _FK_LINE = re.compile(
-    r"FOREIGN\s+KEY\s*\(([^)]+)\)\s*REFERENCES\s+([a-zA-Z0-9_.\"']+)\s*(?:\(([^)]*)\))?",
+    rf"\bFOREIGN\s+KEY\s*\(([^)]*)\)\s*REFERENCES\s+({_QUALIFIED_IDENTIFIER})\s*(?:\(([^)]*)\))?",
     re.IGNORECASE
 )
 
@@ -37,12 +44,272 @@ def _clean_name(s: str) -> str:
 
 
 
+
+def _last_identifier_part(name: str) -> str:
+    parts: list[str] = []
+    buf: list[str] = []
+    in_single = False
+    in_double = False
+    in_bracket = False
+    in_backtick = False
+
+    for idx, ch in enumerate(name):
+        next_ch = name[idx + 1] if idx + 1 < len(name) else ""
+        if in_single:
+            buf.append(ch)
+            if ch == "'" and next_ch == "'":
+                continue
+            if ch == "'":
+                in_single = False
+            continue
+        if in_double:
+            buf.append(ch)
+            if ch == '"' and next_ch == '"':
+                continue
+            if ch == '"':
+                in_double = False
+            continue
+        if in_bracket:
+            buf.append(ch)
+            if ch == "]":
+                in_bracket = False
+            continue
+        if in_backtick:
+            buf.append(ch)
+            if ch == "`":
+                in_backtick = False
+            continue
+
+        if ch == "'":
+            in_single = True
+            buf.append(ch)
+        elif ch == '"':
+            in_double = True
+            buf.append(ch)
+        elif ch == "[":
+            in_bracket = True
+            buf.append(ch)
+        elif ch == "`":
+            in_backtick = True
+            buf.append(ch)
+        elif ch == ".":
+            parts.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+
+    if buf:
+        parts.append("".join(buf).strip())
+    return parts[-1] if parts else name
+
+
+def _identifier_parts(name: str) -> list[str]:
+    parts: list[str] = []
+    buf: list[str] = []
+    in_single = False
+    in_double = False
+    in_bracket = False
+    in_backtick = False
+
+    for idx, ch in enumerate(name):
+        next_ch = name[idx + 1] if idx + 1 < len(name) else ""
+        if in_single:
+            buf.append(ch)
+            if ch == "'" and next_ch == "'":
+                continue
+            if ch == "'":
+                in_single = False
+            continue
+        if in_double:
+            buf.append(ch)
+            if ch == '"' and next_ch == '"':
+                continue
+            if ch == '"':
+                in_double = False
+            continue
+        if in_bracket:
+            buf.append(ch)
+            if ch == "]":
+                in_bracket = False
+            continue
+        if in_backtick:
+            buf.append(ch)
+            if ch == "`":
+                in_backtick = False
+            continue
+
+        if ch == "'":
+            in_single = True
+            buf.append(ch)
+        elif ch == '"':
+            in_double = True
+            buf.append(ch)
+        elif ch == "[":
+            in_bracket = True
+            buf.append(ch)
+        elif ch == "`":
+            in_backtick = True
+            buf.append(ch)
+        elif ch == ".":
+            parts.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+
+    if buf:
+        parts.append("".join(buf).strip())
+    return parts
+
+
+def _unquote_identifier(identifier: str | None) -> str | None:
+    if identifier is None:
+        return None
+    value = identifier.strip()
+    if len(value) >= 2:
+        pairs = {('"', '"'), ("'", "'"), ("`", "`"), ("[", "]")}
+        if (value[0], value[-1]) in pairs:
+            value = value[1:-1]
+    return value.replace('""', '"').replace("''", "'").replace("``", "`")
+
+
+def _consume_identifier(text: str, start: int = 0) -> tuple[str, int]:
+    idx = start
+    while idx < len(text) and text[idx].isspace():
+        idx += 1
+    if idx >= len(text):
+        return "", idx
+
+    opener = text[idx]
+    if opener in ('"', "'", "`", "["):
+        closer = "]" if opener == "[" else opener
+        buf = [opener]
+        idx += 1
+        while idx < len(text):
+            ch = text[idx]
+            next_ch = text[idx + 1] if idx + 1 < len(text) else ""
+            buf.append(ch)
+            if ch == closer:
+                if closer in ('"', "'") and next_ch == closer:
+                    buf.append(next_ch)
+                    idx += 2
+                    continue
+                idx += 1
+                break
+            idx += 1
+        return "".join(buf), idx
+
+    end_chars = set(" \t\r\n,()")
+    begin = idx
+    while idx < len(text) and text[idx] not in end_chars:
+        idx += 1
+    return text[begin:idx], idx
+
+
+def _split_first_identifier(line: str) -> tuple[str, str]:
+    identifier, end_idx = _consume_identifier(line)
+    return identifier, line[end_idx:].strip()
+
+
+def _clean_column_ref(column_ref: str) -> str:
+    identifier, _ = _consume_identifier(column_ref.strip())
+    return _clean_name(identifier or column_ref)
+
+
+def _parse_column_list(column_list: str) -> list[str]:
+    return [
+        _clean_column_ref(item)
+        for item in _split_columns(column_list)
+        if _clean_column_ref(item)
+    ]
+
+
+def _split_sql_tokens(text: str) -> list[str]:
+    tokens: list[str] = []
+    buf: list[str] = []
+    in_single = False
+    in_double = False
+    in_bracket = False
+    in_backtick = False
+
+    idx = 0
+    while idx < len(text):
+        ch = text[idx]
+        next_ch = text[idx + 1] if idx + 1 < len(text) else ""
+
+        if in_single:
+            buf.append(ch)
+            if ch == "'" and next_ch == "'":
+                buf.append(next_ch)
+                idx += 2
+                continue
+            if ch == "'":
+                in_single = False
+            idx += 1
+            continue
+        if in_double:
+            buf.append(ch)
+            if ch == '"' and next_ch == '"':
+                buf.append(next_ch)
+                idx += 2
+                continue
+            if ch == '"':
+                in_double = False
+            idx += 1
+            continue
+        if in_bracket:
+            buf.append(ch)
+            if ch == "]":
+                in_bracket = False
+            idx += 1
+            continue
+        if in_backtick:
+            buf.append(ch)
+            if ch == "`":
+                in_backtick = False
+            idx += 1
+            continue
+
+        if ch.isspace():
+            if buf:
+                tokens.append("".join(buf))
+                buf = []
+        elif ch == "'":
+            in_single = True
+            buf.append(ch)
+        elif ch == '"':
+            in_double = True
+            buf.append(ch)
+        elif ch == "[":
+            in_bracket = True
+            buf.append(ch)
+        elif ch == "`":
+            in_backtick = True
+            buf.append(ch)
+        else:
+            buf.append(ch)
+        idx += 1
+
+    if buf:
+        tokens.append("".join(buf))
+    return tokens
+
+
 def parse_sql(sql_text: str) -> list[dict]:
     tables = []
     sql_text = _strip_sql_comments(sql_text)
 
     for table_name, body in _iter_create_table_blocks(sql_text):
-        clean_table_name = _clean_name(table_name.split(".")[-1])
+        name_parts = _identifier_parts(table_name)
+        schema_name = _unquote_identifier(name_parts[-2]) if len(name_parts) > 1 else None
+        table_original = _unquote_identifier(name_parts[-1]) if name_parts else _unquote_identifier(table_name)
+        clean_table_name = _clean_name(name_parts[-1] if name_parts else table_name)
+        logger.debug(
+            "CREATE TABLE matched: raw=%r schema=%r table=%r normalized_table=%r",
+            table_name,
+            schema_name,
+            table_original,
+            clean_table_name,
+        )
         lines = _split_columns(body)
 
         # ── Pass 1: scan table-level PK / FK constraints ──────
@@ -54,19 +321,20 @@ def parse_sql(sql_text: str) -> list[dict]:
             upper  = line_s.upper()
 
             # PRIMARY KEY (col1, col2, ...)
-            if re.match(r"PRIMARY\s+KEY", upper):
+            if re.search(r"\bPRIMARY\s+KEY\b", upper):
                 m = _PAREN_CONTENT.search(line_s)
                 if m:
-                    for c in m.group(1).split(","):
-                        pk_cols.add(_clean_name(c))
+                    for c in _parse_column_list(m.group(1)):
+                        pk_cols.add(c)
 
             # FOREIGN KEY (col) REFERENCES tbl(col)
             fk_m = _FK_LINE.search(line_s)
             if fk_m:
-                fk_col = _clean_name(fk_m.group(1))
-                ref_table = _clean_name(fk_m.group(2).split(".")[-1])
-                ref_col = _clean_name(fk_m.group(3)) if fk_m.group(3) else None
-                fk_map[fk_col] = {"ref_table": ref_table, "ref_column": ref_col}
+                ref_table = _clean_name(_last_identifier_part(fk_m.group(2)))
+                ref_cols = _parse_column_list(fk_m.group(3)) if fk_m.group(3) else []
+                for idx, fk_col in enumerate(_parse_column_list(fk_m.group(1))):
+                    ref_col = ref_cols[idx] if idx < len(ref_cols) else None
+                    fk_map[fk_col] = {"ref_table": ref_table, "ref_column": ref_col}
 
         # ── Pass 2: parse columns ──────────────────────────────
         for line in lines:
@@ -74,32 +342,34 @@ def parse_sql(sql_text: str) -> list[dict]:
             if not line:
                 continue
 
-            parts = line.split()
-            if not parts:
+            column_identifier, column_rest = _split_first_identifier(line)
+            if not column_identifier or not column_rest:
                 continue
 
-            first_word = parts[0].lower().strip('"\'[]').rstrip(",")
+            first_word = _clean_name(column_identifier).rstrip(",")
             if first_word in LINE_SKIP_KEYWORDS:
                 continue
 
-            if len(parts) < 2:
+            parts = _split_sql_tokens(column_rest)
+            if not parts:
                 continue
 
-            column_name = _clean_name(parts[0])
+            column_name = _clean_name(column_identifier)
 
             # ── parse type ──────────────────────────────────────
             type_tokens: list[str] = []
-            type_end_idx: int = 1
+            type_end_idx: int = 0
             paren_depth: int = 0
 
-            for token in parts[1:]:
+            for token in parts:
                 paren_depth += token.count("(") - token.count(")")
                 clean_token = token.lower().rstrip(",") if paren_depth == 0 else token.lower()
+                clean_token_base = clean_token.split("(", 1)[0]
 
                 if paren_depth == 0:
                     if clean_token in ("not", "null"):
                         break
-                    if clean_token in TYPE_STOP_KEYWORDS:
+                    if clean_token in TYPE_STOP_KEYWORDS or clean_token_base in TYPE_STOP_KEYWORDS:
                         break
 
                 type_tokens.append(token)
@@ -114,7 +384,11 @@ def parse_sql(sql_text: str) -> list[dict]:
             remaining_tokens = [t.rstrip(",") for t in parts[type_end_idx:]]
             remaining_clean = _strip_collate(remaining_tokens).upper()
 
-            nullable = "NOT NULL" if _NOT_NULL.search(remaining_clean) else "NULL"
+            nullable = (
+                "NOT NULL"
+                if _NOT_NULL.search(remaining_clean) or column_name in pk_cols or _PK_INLINE.search(remaining_clean)
+                else "NULL"
+            )
 
             # ── inline PRIMARY KEY ──────────────────────────────
             if _PK_INLINE.search(remaining_clean):
@@ -123,12 +397,15 @@ def parse_sql(sql_text: str) -> list[dict]:
             # ── inline REFERENCES ───────────────────────────────
             ref_m = _REFERENCES.search(line)
             if ref_m and column_name not in fk_map:
-                ref_table = _clean_name(ref_m.group(1).split(".")[-1])
-                ref_col = _clean_name(ref_m.group(2)) if ref_m.group(2) else None
+                ref_table = _clean_name(_last_identifier_part(ref_m.group(1)))
+                ref_cols = _parse_column_list(ref_m.group(2)) if ref_m.group(2) else []
+                ref_col = ref_cols[0] if ref_cols else None
                 fk_map[column_name] = {"ref_table": ref_table, "ref_column": ref_col}
 
             tables.append({
                 "table": clean_table_name,
+                "schema":   schema_name,
+                "table_original": table_original,
                 "column":   column_name,
                 "type":     sql_type,
                 "nullable": nullable,
@@ -151,16 +428,59 @@ def _iter_create_table_blocks(sql_text: str):
         table_name = match.group(1)
         open_idx = match.end() - 1
         depth = 0
+        in_single = False
+        in_double = False
+        in_bracket = False
+        in_backtick = False
 
-        for idx in range(open_idx, len(sql_text)):
+        idx = open_idx
+        while idx < len(sql_text):
             ch = sql_text[idx]
-            if ch == "(":
+            next_ch = sql_text[idx + 1] if idx + 1 < len(sql_text) else ""
+
+            if in_single:
+                if ch == "'" and next_ch == "'":
+                    idx += 2
+                    continue
+                if ch == "'":
+                    in_single = False
+                idx += 1
+                continue
+            if in_double:
+                if ch == '"' and next_ch == '"':
+                    idx += 2
+                    continue
+                if ch == '"':
+                    in_double = False
+                idx += 1
+                continue
+            if in_bracket:
+                if ch == "]":
+                    in_bracket = False
+                idx += 1
+                continue
+            if in_backtick:
+                if ch == "`":
+                    in_backtick = False
+                idx += 1
+                continue
+
+            if ch == "'":
+                in_single = True
+            elif ch == '"':
+                in_double = True
+            elif ch == "[":
+                in_bracket = True
+            elif ch == "`":
+                in_backtick = True
+            elif ch == "(":
                 depth += 1
             elif ch == ")":
                 depth -= 1
                 if depth == 0:
                     yield table_name, sql_text[open_idx + 1:idx]
                     break
+            idx += 1
 
 
 def validate_fk(tables: dict[str, list[dict]]) -> list:
@@ -233,27 +553,86 @@ def _strip_collate(tokens: list[str]) -> str:
 
 
 def _strip_sql_comments(sql_text: str) -> str:
-    # ลบ block comments /* ... */ ก่อน (รองรับหลายบรรทัด)
-    result = re.sub(r"/\*.*?\*/", " ", sql_text, flags=re.DOTALL)
+    result: list[str] = []
+    in_single = False
+    in_double = False
+    in_bracket = False
+    in_backtick = False
 
-    lines: list[str] = []
-    for line in result.splitlines():
-        in_single = False
-        in_double = False
-        cut_idx = len(line)
+    idx = 0
+    while idx < len(sql_text):
+        ch = sql_text[idx]
+        next_ch = sql_text[idx + 1] if idx + 1 < len(sql_text) else ""
 
-        for idx, ch in enumerate(line):
-            prev = line[idx - 1] if idx > 0 else ""
-            if ch == "'" and not in_double and prev != "\\":
-                in_single = not in_single
-            elif ch == '"' and not in_single and prev != "\\":
-                in_double = not in_double
-            elif ch == "-" and not in_single and not in_double and line[idx:idx + 2] == "--":
-                cut_idx = idx
-                break
+        if in_single:
+            result.append(ch)
+            if ch == "'" and next_ch == "'":
+                result.append(next_ch)
+                idx += 2
+                continue
+            if ch == "'":
+                in_single = False
+            idx += 1
+            continue
+        if in_double:
+            result.append(ch)
+            if ch == '"' and next_ch == '"':
+                result.append(next_ch)
+                idx += 2
+                continue
+            if ch == '"':
+                in_double = False
+            idx += 1
+            continue
+        if in_bracket:
+            result.append(ch)
+            if ch == "]":
+                in_bracket = False
+            idx += 1
+            continue
+        if in_backtick:
+            result.append(ch)
+            if ch == "`":
+                in_backtick = False
+            idx += 1
+            continue
 
-        lines.append(line[:cut_idx])
-    return "\n".join(lines)
+        if ch == "'":
+            in_single = True
+            result.append(ch)
+            idx += 1
+        elif ch == '"':
+            in_double = True
+            result.append(ch)
+            idx += 1
+        elif ch == "[":
+            in_bracket = True
+            result.append(ch)
+            idx += 1
+        elif ch == "`":
+            in_backtick = True
+            result.append(ch)
+            idx += 1
+        elif ch == "/" and next_ch == "*":
+            idx += 2
+            while idx < len(sql_text) - 1 and sql_text[idx:idx + 2] != "*/":
+                if sql_text[idx] in "\r\n":
+                    result.append(sql_text[idx])
+                idx += 1
+            idx += 2
+        elif ch == "-" and next_ch == "--":
+            idx += 2
+            while idx < len(sql_text) and sql_text[idx] not in "\r\n":
+                idx += 1
+        elif ch == "#":
+            idx += 1
+            while idx < len(sql_text) and sql_text[idx] not in "\r\n":
+                idx += 1
+        else:
+            result.append(ch)
+            idx += 1
+
+    return "".join(result)
 
 
 def _split_columns(body: str) -> list[str]:
@@ -264,22 +643,50 @@ def _split_columns(body: str) -> list[str]:
     in_single: bool  = False
     in_double: bool  = False
 
-    for idx, ch in enumerate(body):
-        prev = body[idx - 1] if idx > 0 else ""
-        if ch == "'" and not in_double and prev != "\\":
-            in_single = not in_single
-        elif ch == '"' and not in_single and prev != "\\":
-            in_double = not in_double
+    idx = 0
+    while idx < len(body):
+        ch = body[idx]
+        next_ch = body[idx + 1] if idx + 1 < len(body) else ""
 
-        if not in_single and not in_double and ch == "(":
+        if in_single:
+            buf.append(ch)
+            if ch == "'" and next_ch == "'":
+                buf.append(next_ch)
+                idx += 2
+                continue
+            if ch == "'":
+                in_single = False
+            idx += 1
+            continue
+        if in_double:
+            buf.append(ch)
+            if ch == '"' and next_ch == '"':
+                buf.append(next_ch)
+                idx += 2
+                continue
+            if ch == '"':
+                in_double = False
+            idx += 1
+            continue
+
+        if ch == "'":
+            in_single = True
+            buf.append(ch)
+        elif ch == '"':
+            in_double = True
+            buf.append(ch)
+        elif ch == "(":
             depth += 1
-        elif not in_single and not in_double and ch == ")":
+            buf.append(ch)
+        elif ch == ")":
             depth -= 1
-        if ch == "," and depth == 0 and not in_single and not in_double:
+            buf.append(ch)
+        elif ch == "," and depth == 0:
             parts.append("".join(buf).strip())
             buf = []
         else:
             buf.append(ch)
+        idx += 1
 
     if buf:
         parts.append("".join(buf).strip())

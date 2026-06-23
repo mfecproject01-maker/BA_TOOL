@@ -51,6 +51,30 @@ _MAPPING_TTL = timedelta(seconds=30)
 
 converter: DataTypeConverter = DataTypeConverter({})
 
+def _decode_sql_upload(raw: bytes, filename: str) -> str:
+    """Decode SQL uploads from common export encodings."""
+    if raw.startswith(b"\xff\xfe") or raw.startswith(b"\xfe\xff"):
+        return raw.decode("utf-16")
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return raw.decode("utf-8-sig")
+
+    sample = raw[:4096]
+    even_nulls = sample[0::2].count(0)
+    odd_nulls = sample[1::2].count(0)
+    if odd_nulls > max(8, len(sample) // 8) and even_nulls < odd_nulls // 4:
+        logger.info(f"Detected UTF-16 LE SQL upload: {filename}")
+        return raw.decode("utf-16-le")
+    if even_nulls > max(8, len(sample) // 8) and odd_nulls < even_nulls // 4:
+        logger.info(f"Detected UTF-16 BE SQL upload: {filename}")
+        return raw.decode("utf-16-be")
+
+    for encoding in ("utf-8-sig", "cp874", "cp1252", "latin-1"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")
+
 # ── Background session cleanup ────────────────────────────────────────────
 async def _session_cleanup_loop() -> None:
     """Background task: purge expired sessions every 5 minutes."""
@@ -416,7 +440,7 @@ async def convert(
             raw = await file.read()
             if len(raw) > MAX_FILE_SIZE:
                 raise HTTPException(400, f"{filename}: exceeds {MAX_FILE_SIZE_MB} MB limit")
-            sql_text = raw.decode("utf-8-sig")
+            sql_text = _decode_sql_upload(raw, filename)
         except HTTPException:
             raise
         except Exception as e:
@@ -457,6 +481,8 @@ async def convert(
                 
                 col_entry = {
                     "column_name":     row["column"],
+                    "schema":          row.get("schema"),
+                    "table_original":  row.get("table_original"),
                     "file":            filename,
                     "raw_type":        res.get("raw"),
                     "logical_type":    res.get("logical"),
