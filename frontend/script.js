@@ -913,6 +913,7 @@ function renderTables() {
       <div class="empty-state-text">ไม่พบตารางในไฟล์นี้</div>
     </div>`;
     bulk.classList.remove('visible');
+    renderParseErrorWarnings(lastParseErrors);
     return;
   }
 
@@ -941,6 +942,7 @@ function renderTables() {
         </div>
       </div>`;
   }).join('');
+  renderParseErrorWarnings(lastParseErrors);
 }
 
 function buildTableCard(k) {
@@ -1851,6 +1853,7 @@ function clearUI() {
   document.getElementById('byteAnomalyWarnings')?.remove();
   document.getElementById('fkErrorPanel')?.remove();
   document.getElementById('contentDupWarnings')?.remove();
+  document.getElementById('parseErrorWarnings')?.remove();
   updateStats(0,0,0);
   updateBadges(0,0,'ready');
 }
