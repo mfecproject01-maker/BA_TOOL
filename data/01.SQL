@@ -99,7 +99,7 @@ CREATE TABLE hrEmployee_Work (
     WorkLocationCode nvarchar(20) COLLATE Thai_CI_AS NULL,
     IsActive bit NOT NULL,
     IsResigned bit NULL,
-    IsBlacklist UnknownDataType NULL, 
+    IsBlacklist BIT NULL, 
     CurrentLeaveGroup nvarchar(20) COLLATE Thai_CI_AS NULL,
     CostCenterCode nvarchar(50) COLLATE Thai_CI_AS NULL,
     GLAccountCode nvarchar(50) COLLATE Thai_CI_AS NULL,

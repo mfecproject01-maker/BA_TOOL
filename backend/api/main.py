@@ -562,9 +562,9 @@ def get_issues(session_id: str):
         ref_table = fk_error.get("ref_table") or fk_error.get("referenced_table") or fk_error.get("table")
         ref_col = fk_error.get("ref_col") or fk_error.get("ref_column") or fk_error.get("column")
         if ref_table and ref_col:
-            return f"ตรวจสอบว่าโต๊ะอ้างอิง '{ref_table}' และคอลัมน์ '{ref_col}' มีอยู่จริง และชื่อถูกต้อง"
+            return f"ตรวจสอบว่า TABLE อ้างอิง '{ref_table}' และคอลัมน์ '{ref_col}' มีอยู่จริง และชื่อถูกต้อง"
         if ref_table:
-            return f"ตรวจสอบว่าโต๊ะอ้างอิง '{ref_table}' มีอยู่จริง และแก้ชื่อให้ถูกต้อง"
+            return f"ตรวจสอบว่า TABLE อ้างอิง '{ref_table}' มีอยู่จริง และแก้ชื่อให้ถูกต้อง"
         return "ตรวจสอบ foreign key reference ให้ถูกต้องและมีตารางปลายทางอยู่จริง"
 
     def _byte_anomaly_suggestion(item: dict) -> str:
