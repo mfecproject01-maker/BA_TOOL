@@ -562,13 +562,13 @@ async function onIssueRowClick(idx) {
     if (!res.ok) return;
     const body = await res.json();
     const lines = body.lines || [];
-    openFilePreviewModal(file, lines, it.line || 1);
+    openFilePreviewModal(file, lines, it.line || 1, it.column || it.column_pos || null, it.message || '');
   } catch (e) {
     console.warn('failed to fetch file lines', e);
   }
 }
 
-function openFilePreviewModal(filename, lines, highlightLine) {
+function openFilePreviewModal(filename, lines, highlightLine, highlightColumn, message) {
   const overlay = document.createElement('div');
   overlay.className = 'table-modal-overlay';
   overlay.id = 'filePreviewOverlay';
@@ -580,16 +580,23 @@ function openFilePreviewModal(filename, lines, highlightLine) {
         <div class="table-modal-icon">📄</div>
         <div style="min-width:0;flex:1">
           <div class="table-modal-title">${escapeHtml(filename)}</div>
-          <div class="table-modal-meta">${lines.length} lines</div>
+          <div class="table-modal-meta">${lines.length} lines ${highlightLine ? `· highlight line ${highlightLine}` : ''}</div>
+          ${highlightLine ? `<div class="file-preview-warning">${escapeHtml(message)}</div>` : ''}
         </div>
         <button class="table-modal-close" onclick="closeFilePreviewModal()">✕</button>
       </div>
       <div class="table-modal-body" style="padding:12px 18px;max-height:520px;overflow:auto" id="filePreviewBody">
-        <div style="font-family:var(--mono);font-size:13px;white-space:pre;line-height:1.45;">${lines.map((ln,i)=>{
+        <div class="file-preview-lines" style="font-family:var(--mono);font-size:13px;line-height:1.45;">${lines.map((ln,i)=>{
           const num = i+1;
           const txt = escapeHtml(ln || '');
-          if (num === Number(highlightLine)) return `<div data-line="${num}" class="preview-line highlight-line"><span class="preview-line-num">${num}</span> ${txt}</div>`;
-          return `<div data-line="${num}" class="preview-line"><span class="preview-line-num">${num}</span> ${txt}</div>`;
+          const isHighlight = num === Number(highlightLine);
+          const caret = isHighlight && highlightColumn ? `<div class="preview-caret"><span style="display:inline-block;width:${Math.max(0, highlightColumn - 1)}ch"></span>^</div>` : '';
+          return `
+            <div data-line="${num}" class="preview-line${isHighlight ? ' highlight-line' : ''}">
+              <span class="preview-line-num">${num}</span>
+              <span class="preview-line-text">${txt}</span>
+              ${caret}
+            </div>`;
         }).join('')}</div>
       </div>
     </div>`;
