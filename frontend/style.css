@@ -4261,6 +4261,7 @@ body { padding-bottom: 72px; }
 
 /* Error Panel */
 .error-panel { border:1px solid var(--border); border-radius:8px; padding:8px; margin:10px 0; background:var(--surface); }
+.error-panel[aria-hidden="true"] { display:none; }
 .error-panel-header { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:8px }
 .error-counts { display:flex; gap:8px; align-items:center }
 .err-count { font-size:0.9em }

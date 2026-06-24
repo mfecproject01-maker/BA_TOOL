@@ -1,8 +1,8 @@
 CREATE TABLE hrEmployee_Personal (
     EmployeeID varchar(36) COLLATE Thai_CI_AS NOT NULL,
-    EmployeeCode nvarchar(50) COLLATE Thai_CI_AS NOT NULL,
+    EmployeeCode nvarchar(50) COLLATE Thai_CI_AS NOT NULL 
     NationalID nvarchar(30) COLLATE Thai_CI_AS NULL,
-    PassportNo nvarchar(30) COLLATE Thai_CI_AS NULL,
+    PassportNo nvarchar(-10) COLLATE Thai_CI_AS NULL, 
     TaxID nvarchar(30) COLLATE Thai_CI_AS NULL,
     PrefixThai nvarchar(50) COLLATE Thai_CI_AS NULL,
     FirstNameThai nvarchar(150) COLLATE Thai_CI_AS NOT NULL,
@@ -21,7 +21,7 @@ CREATE TABLE hrEmployee_Personal (
     MaritalStatus nvarchar(20) COLLATE Thai_CI_AS NULL,
     MilitaryStatus nvarchar(50) COLLATE Thai_CI_AS NULL,
     BloodType nvarchar(5) COLLATE Thai_CI_AS NULL,
-    WeightKg decimal(5,2) NULL,
+    WeightKg decimal(2,5) NULL, 
     HeightCm decimal(5,2) NULL,
     PrimaryEmail nvarchar(255) COLLATE Thai_CI_AS NULL,
     SecondaryEmail nvarchar(255) COLLATE Thai_CI_AS NULL,
@@ -48,10 +48,10 @@ CREATE TABLE hrEmployee_Personal (
     CurrentSubDistrict nvarchar(100) COLLATE Thai_CI_AS NULL,
     CurrentDistrict nvarchar(100) COLLATE Thai_CI_AS NULL,
     CurrentProvince nvarchar(100) COLLATE Thai_CI_AS NULL,
-    CurrentPostalCode nvarchar(10) COLLATE Thai_CI_AS NULL,
+    CurrentPostalCode nvarchar(10) COLLATE Thai_CI_AS NULL, 
     
     PRIMARY KEY (EmployeeID)
-);
+); 
 
 CREATE TABLE hrEmployee_Work (
     EmployeeID varchar(36) COLLATE Thai_CI_AS NOT NULL,
@@ -66,7 +66,7 @@ CREATE TABLE hrEmployee_Work (
     SupervisorID varchar(36) COLLATE Thai_CI_AS NULL,
     EmployeeType nvarchar(50) COLLATE Thai_CI_AS NULL, 
     WorkStatus nvarchar(50) COLLATE Thai_CI_AS NULL,   
-    HireDate date NULL,
+    HireDate datetime2(9) NULL, 
     ProbationEndDate date NULL,
     RegularDate date NULL,
     ResignDate date NULL,
@@ -99,16 +99,15 @@ CREATE TABLE hrEmployee_Work (
     WorkLocationCode nvarchar(20) COLLATE Thai_CI_AS NULL,
     IsActive bit NOT NULL,
     IsResigned bit NULL,
-    IsBlacklist bit NULL,
+    IsBlacklist UnknownDataType NULL, 
     CurrentLeaveGroup nvarchar(20) COLLATE Thai_CI_AS NULL,
     CostCenterCode nvarchar(50) COLLATE Thai_CI_AS NULL,
     GLAccountCode nvarchar(50) COLLATE Thai_CI_AS NULL,
     WorkRemark nvarchar(500) COLLATE Thai_CI_AS NULL,
     
     PRIMARY KEY (EmployeeID),
-    FOREIGN KEY (EmployeeID) REFERENCES hrEmployee_Personal(EmployeeID)
+    FOREIGN KEY (EmployeeID) REFERENCES hrEmployee_FakeTable(ID) 
 );
-
 CREATE TABLE hrEmployee_Audit_Health (
     EmployeeID varchar(36) COLLATE Thai_CI_AS NOT NULL,
     BiometricID varchar(50) COLLATE Thai_CI_AS NULL,  
@@ -129,7 +128,7 @@ CREATE TABLE hrEmployee_Audit_Health (
     EducationRemark nvarchar(255) COLLATE Thai_CI_AS NULL,
     LanguageSkill1 nvarchar(50) COLLATE Thai_CI_AS NULL,
     LanguageScore1 decimal(5,2) NULL,
-    LanguageSkill2 nvarchar(50) COLLATE Thai_CI_AS NULL,
+    LanguageSkill1 nvarchar(50) COLLATE Thai_CI_AS NULL, 
     LanguageScore2 decimal(5,2) NULL,
     DriverLicenseNo nvarchar(50) COLLATE Thai_CI_AS NULL,
     DriverLicenseExpiry date NULL,
@@ -159,8 +158,9 @@ CREATE TABLE hrEmployee_Audit_Health (
     ModifiedIP varchar(50) COLLATE Thai_CI_AS NULL,
     ModifiedProgram nvarchar(100) COLLATE Thai_CI_AS NULL,
     RowVersion timestamp NOT NULL, 
-    GeneralRemark nvarchar(500) COLLATE Thai_CI_AS NULL,
+    GeneralRemark nvarchar(500) COLLATE Thai_CI_AS NULL Default 'No Remark' 
+    ExtraColumnAfterDefault nvarchar(10) NULL, 
     
-    PRIMARY KEY (EmployeeID),
+    PRIMERY KEY (EmployeeID), 
     FOREIGN KEY (EmployeeID) REFERENCES hrEmployee_Personal(EmployeeID)
 );

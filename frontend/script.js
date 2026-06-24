@@ -485,12 +485,8 @@ async function sendSQLToBackend(sqlFiles) {
     const contentDups  = data.content_dup_warnings || [];
     const parseErrCount = Object.values(data.parse_errors || {}).flat().length;
 
-    if (unknownCount > 0) renderUnknownWarnings(data.unknown);
-    if (data.fk_errors && data.fk_errors.length > 0) renderFKErrors(data.fk_errors);
-    if (anomalyCount > 0) renderByteAnomalyWarnings(data.byte_anomalies);
     if (contentDups.length > 0) renderContentDupWarnings(contentDups);
     lastParseErrors = data.parse_errors || {};
-    if (parseErrCount > 0) renderParseErrorWarnings(lastParseErrors);
 
     const dbPairLabel = data.source_db && data.dest_db
       ? ` [${data.source_db} → ${data.dest_db}]` : '';
@@ -517,7 +513,7 @@ async function sendSQLToBackend(sqlFiles) {
 async function fetchAndRenderIssues(session) {
   if (!session) return;
   try {
-    const res = await fetchWithApiFallback(`/result/${session}/issues`);
+    const res = await fetchWithApiFallback(`/api/result/${session}/issues`);
     if (!res.ok) return;
     const data = await res.json();
     _issues = data.issues || [];
@@ -551,6 +547,8 @@ function renderIssuesTable(issues) {
   document.getElementById('errCount').textContent = String(err);
   document.getElementById('warnCount').textContent = String(warn);
   document.getElementById('infoCount').textContent = String(info);
+  const panel = document.getElementById('errorPanel');
+  if (panel) panel.setAttribute('aria-hidden', issues.length ? 'false' : 'true');
   _currentIssueIndex = issues.length ? 0 : -1;
 }
 
@@ -560,7 +558,7 @@ async function onIssueRowClick(idx) {
   _currentIssueIndex = idx;
   const file = it.file || Object.keys(currentData)[0] || 'unknown.sql';
   try {
-    const res = await fetchWithApiFallback(`/result/${sessionId}/file/${encodeURIComponent(file)}`);
+    const res = await fetchWithApiFallback(`/api/result/${sessionId}/file/${encodeURIComponent(file)}`);
     if (!res.ok) return;
     const body = await res.json();
     const lines = body.lines || [];
@@ -735,16 +733,7 @@ async function syncSessionDiagnostics() {
   document.getElementById('fkErrorPanel')?.remove();
   document.getElementById('parseErrorWarnings')?.remove();
 
-  if (Object.values(data.unknown || {}).flat().length > 0) renderUnknownWarnings(data.unknown);
-  if ((data.fk_errors || []).length > 0) renderFKErrors(data.fk_errors);
-  if (Object.values(data.byte_anomalies || {}).flat().length > 0) {
-    renderByteAnomalyWarnings(data.byte_anomalies);
-  }
   lastParseErrors = data.parse_errors || {};
-  if (Object.values(lastParseErrors).flat().length > 0) {
-    renderParseErrorWarnings(lastParseErrors);
-  }
-
   renderTypePanel();
   renderTables();
   if (sessionId) {
@@ -769,14 +758,12 @@ async function fetchResult() {
       data.duplicate_tables || {},
       data.fk_errors || []
     );
-    if (Object.values(data.byte_anomalies || {}).flat().length > 0)
-      renderByteAnomalyWarnings(data.byte_anomalies);
     lastParseErrors = data.parse_errors || {};
-    if (Object.values(lastParseErrors).flat().length > 0) {
-      renderParseErrorWarnings(lastParseErrors);
-    }
     renderTypePanel();
     renderTables();
+    if (sessionId) {
+      try { fetchAndRenderIssues(sessionId); } catch (e) { /* ignore */ }
+    }
     showStatus('convertStatus', 'success', '✓ Refresh result สำเร็จ');
   } catch (err) {
     showStatus('convertStatus', 'error', '❌ ' + err.message);
@@ -1267,13 +1254,9 @@ async function submitSqlEdit(filename) {
     );
 
     lastParseErrors = data.parse_errors || {};
-    renderParseErrorWarnings(lastParseErrors);
 
     const unknownCount = Object.values(data.unknown || {}).flat().length;
     const anomalyCount = Object.values(data.byte_anomalies || {}).flat().length;
-    if (unknownCount > 0) renderUnknownWarnings(data.unknown);
-    if ((data.fk_errors || []).length > 0) renderFKErrors(data.fk_errors);
-    if (anomalyCount > 0) renderByteAnomalyWarnings(data.byte_anomalies);
 
     closeSqlEditModal();
     onAllDone();
