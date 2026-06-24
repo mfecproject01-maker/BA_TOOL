@@ -21,7 +21,7 @@ from backend.middleware.maintenance_middleware import MaintenanceMiddleware
 
 from backend.repository.mapping_repo import MappingRepository
 from backend.core.converter import DataTypeConverter
-from backend.parser.sql_parser import parse_sql, validate_fk
+from backend.parser.sql_parser import parse_sql, parse_sql_with_errors, validate_fk
 from backend.config.logger import logger, get_recent_logs, clear_logs
 from backend.config.db import init_db_pool, close_db_pool
 from backend.core.cache_store import result_cache
@@ -191,6 +191,27 @@ class OverrideRequest(BaseModel):
         if len(v) > 256:
             raise ValueError("Field too long")
         return v
+
+
+class ReparseTableRequest(BaseModel):
+    filename: str
+    sql_text: str
+
+    @field_validator("filename")
+    @classmethod
+    def filename_not_empty(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("filename must not be empty")
+        return v
+
+    @field_validator("sql_text")
+    @classmethod
+    def sql_text_size_limit(cls, v: str) -> str:
+        if len(v.encode("utf-8")) > MAX_FILE_SIZE:
+            raise ValueError(f"sql_text exceeds {MAX_FILE_SIZE_MB} MB limit")
+        return v
+
 
 # ── Helpers ───────────────────────────────────────────────
 def cleanup_expired_sessions() -> None:
@@ -405,6 +426,100 @@ def get_db_pairs():
         logger.error(f"❌ Failed to fetch db pairs: {e}")
         raise HTTPException(500, "Failed to fetch DB pairs")
 
+def _process_sql_file(
+    filename: str,
+    sql_text: str,
+    active_mapping: dict,
+    tables: dict,
+    unknown: dict,
+    table_source: dict,
+    duplicate_tables: dict,
+    byte_anomalies: dict,
+) -> list[dict]:
+    """
+    ประมวลผล SQL text ของไฟล์เดียว แล้ว mutate tables/unknown/table_source/
+    duplicate_tables/byte_anomalies ที่ส่งเข้ามาโดยตรง (in-place) เหมือนที่
+    /convert ทำในลูปเดิม แยกออกมาเป็นฟังก์ชันเพื่อให้ /reparse-table เรียกซ้ำ
+    ได้โดยไม่ต้องก๊อปโค้ด — พฤติกรรมต้องเหมือนกันทุกประการ
+
+    คืนค่า parse_errors (list[dict]) ของไฟล์นี้ (ถ้ามี table ที่วงเล็บไม่ปิด)
+    """
+    parsed, file_parse_errors = parse_sql_with_errors(sql_text)
+    if file_parse_errors:
+        for err in file_parse_errors:
+            logger.warning(
+                f"  ⚠️ {filename}: ตาราง '{err['table']}' วงเล็บไม่ปิดครบ"
+            )
+
+    if not parsed:
+        logger.warning(f"  ⚠️ No table found in: {filename}")
+        return file_parse_errors
+
+    parsed_by_table: dict = {}
+    for row in parsed:
+        parsed_by_table.setdefault(row["table"], []).append(row)
+
+    for table, table_rows in parsed_by_table.items():
+        is_duplicate = False
+        if table in table_source:
+            dup = duplicate_tables.setdefault(table, {
+                "first_file":      table_source[table],
+                "duplicate_files": [],
+            })
+            if filename not in dup["duplicate_files"]:
+                dup["duplicate_files"].append(filename)
+                logger.warning(
+                    f"⚠️  Duplicate table '{table}' in '{filename}' "
+                    f"(first defined in '{table_source[table]}')"
+                )
+            is_duplicate = True
+            table_key = f"{table}__{filename}"
+        else:
+            table_source[table] = filename
+            table_key = table
+
+        for row in table_rows:
+            # ใช้ active_mapping ที่โหลดมาสดๆ ในการ convert
+            res = converter.convert(row["type"], override_mapping=active_mapping)
+
+            col_entry = {
+                "column_name":     row["column"],
+                "schema":          row.get("schema"),
+                "table_original":  row.get("table_original"),
+                "file":            filename,
+                "raw_type":        res.get("raw"),
+                "logical_type":    res.get("logical"),
+                "standard_type":   res.get("standard_type"),
+                "final_type":      res.get("final") if res.get("status") == "ok" else row["type"],
+                "source_sql_type": row["type"],
+                "nullable":        "NOT NULL" if row.get("nullable") == "NOT NULL" else "NULL",
+                "is_pk":           row.get("is_pk", False),
+                "fk":              row.get("fk"),
+                "is_duplicate":    is_duplicate,
+            }
+            tables.setdefault(table_key, []).append(col_entry)
+
+            if res.get("status") != "ok":
+                unknown.setdefault(table_key, []).append({
+                    "column_name": row["column"],
+                    "type":        row["type"],
+                    "file":        filename,
+                })
+
+            # ตรวจสอบ byte anomalies (เช่น binary types)
+            if res.get("byte_anomaly"):
+                byte_anomalies.setdefault(table_key, []).append({
+                    "column_name": row["column"],
+                    "source_type": row["type"],
+                    "raw_type": res.get("raw"),
+                    "logical_type": res.get("logical"),
+                    "detail": res.get("byte_anomaly_detail"),
+                    "file": filename,
+                })
+
+    return file_parse_errors
+
+
 @app.post("/convert")
 @limiter.limit("30/minute")
 async def convert(
@@ -436,6 +551,8 @@ async def convert(
     table_source: dict = {}
     duplicate_tables: dict = {}
     byte_anomalies: dict = {}
+    parse_errors_by_file: dict = {}
+    file_sql_text: dict = {}  # filename -> raw decoded SQL text (สำหรับ /reparse-table)
 
     for file in files:
         filename = file.filename
@@ -451,86 +568,30 @@ async def convert(
             logger.error(f"❌ Error reading {filename}: {e}")
             raise HTTPException(400, f"Cannot read file: {filename}")
 
-        parsed = parse_sql(sql_text)
-        if not parsed:
-            logger.warning(f"  ⚠️ No table found in: {filename}")
-            continue
+        file_sql_text[filename] = sql_text
 
-        parsed_by_table: dict = {}
-        for row in parsed:
-            parsed_by_table.setdefault(row["table"], []).append(row)
-
-        for table, table_rows in parsed_by_table.items():
-            is_duplicate = False
-            if table in table_source:
-                dup = duplicate_tables.setdefault(table, {
-                    "first_file":      table_source[table],
-                    "duplicate_files": [],
-                })
-                if filename not in dup["duplicate_files"]:
-                    dup["duplicate_files"].append(filename)
-                    logger.warning(
-                        f"⚠️  Duplicate table '{table}' in '{filename}' "
-                        f"(first defined in '{table_source[table]}')"
-                    )
-                is_duplicate = True
-                table_key = f"{table}__{filename}"
-            else:
-                table_source[table] = filename
-                table_key = table
-
-            for row in table_rows:
-                # ใช้ active_mapping ที่โหลดมาสดๆ ในการ convert
-                res = converter.convert(row["type"], override_mapping=active_mapping)
-                
-                col_entry = {
-                    "column_name":     row["column"],
-                    "schema":          row.get("schema"),
-                    "table_original":  row.get("table_original"),
-                    "file":            filename,
-                    "raw_type":        res.get("raw"),
-                    "logical_type":    res.get("logical"),
-                    "standard_type":   res.get("standard_type"),
-                    "final_type":      res.get("final") if res.get("status") == "ok" else row["type"],
-                    "source_sql_type": row["type"],
-                    "nullable":        "NOT NULL" if row.get("nullable") == "NOT NULL" else "NULL",
-                    "is_pk":           row.get("is_pk", False),
-                    "fk":              row.get("fk"),
-                    "is_duplicate":    is_duplicate,
-                }
-                tables.setdefault(table_key, []).append(col_entry)
-
-                if res.get("status") != "ok":
-                    unknown.setdefault(table_key, []).append({
-                        "column_name": row["column"],
-                        "type":        row["type"],
-                        "file":        filename,
-                    })
-                
-                # ตรวจสอบ byte anomalies (เช่น binary types)
-                if res.get("byte_anomaly"):
-                    byte_anomalies.setdefault(table_key, []).append({
-                        "column_name": row["column"],
-                        "source_type": row["type"],
-                        "raw_type": res.get("raw"),
-                        "logical_type": res.get("logical"),
-                        "detail": res.get("byte_anomaly_detail"),
-                        "file": filename,
-                    })
+        file_parse_errors = _process_sql_file(
+            filename, sql_text, active_mapping,
+            tables, unknown, table_source, duplicate_tables, byte_anomalies,
+        )
+        if file_parse_errors:
+            parse_errors_by_file[filename] = file_parse_errors
 
     # Validate foreign keys
     fk_errors = validate_fk(tables)
 
     session_id = str(uuid.uuid4())
     result_cache[session_id] = {
-        "tables":           tables,
-        "unknown":          unknown,
-        "fk_errors":        fk_errors,
-        "byte_anomalies":   byte_anomalies,
-        "duplicate_tables": duplicate_tables,
-        "source_db":        source_db,
-        "dest_db":          dest_db,
-        "created_at":       datetime.now(),
+        "tables":             tables,
+        "unknown":            unknown,
+        "fk_errors":          fk_errors,
+        "byte_anomalies":     byte_anomalies,
+        "duplicate_tables":   duplicate_tables,
+        "parse_errors":       parse_errors_by_file,
+        "file_sql_text":      file_sql_text,
+        "source_db":          source_db,
+        "dest_db":            dest_db,
+        "created_at":         datetime.now(),
     }
 
     logger.info(f"✅ Session {session_id} created — {len(tables)} table(s)")
@@ -545,7 +606,9 @@ async def convert(
         "fk_errors":        fk_errors,
         "byte_anomalies":   byte_anomalies,
         "duplicate_tables": duplicate_tables,
+        "parse_errors":     parse_errors_by_file,
     }
+
 
 @app.get("/result/{session_id}")
 def get_result(session_id: str):
@@ -566,6 +629,98 @@ def override(session_id: str, body: OverrideRequest):
             return {"updated_column": col}
             
     raise HTTPException(404, f"Column '{body.column}' not found in table '{body.table}'")
+
+
+@app.post("/reparse-table/{session_id}")
+@limiter.limit("30/minute")
+def reparse_table(request: Request, session_id: str, body: ReparseTableRequest):
+    """
+    รับ SQL text ที่ผู้ใช้แก้ไขเอง (เช่นแก้วงเล็บที่ไม่ปิดให้ครบ) สำหรับไฟล์
+    เดียวในเซสชันนี้ แล้ว parse ใหม่ทั้งไฟล์ — ลบผลลัพธ์เดิมของไฟล์นี้ออกจาก
+    session ก่อน (ทุก table_key ที่มาจากไฟล์นี้, parse_errors เดิม) แล้วค่อย
+    ประมวลผลใหม่ด้วย sql_text ที่แก้แล้ว เพื่อไม่ให้ข้อมูลเก่า/ใหม่ปนกัน
+    """
+    data = get_cached_data(session_id)
+    filename = body.filename
+
+    if filename not in data.get("file_sql_text", {}):
+        raise HTTPException(404, f"File '{filename}' not found in this session")
+
+    tables: dict = data["tables"]
+    unknown: dict = data["unknown"]
+    byte_anomalies: dict = data["byte_anomalies"]
+    duplicate_tables: dict = data["duplicate_tables"]
+    parse_errors_by_file: dict = data.setdefault("parse_errors", {})
+
+    # ── ลบผลลัพธ์เดิมของไฟล์นี้ออกก่อน reparse ──────────────
+    # table_key ที่มาจากไฟล์นี้: ทั้งแบบปกติ (table == table_key) และแบบ
+    # duplicate (table_key = f"{table}__{filename}")
+    stale_keys = [
+        key for key, cols in tables.items()
+        if any(c.get("file") == filename for c in cols)
+    ]
+    for key in stale_keys:
+        tables[key] = [c for c in tables[key] if c.get("file") != filename]
+        if not tables[key]:
+            tables.pop(key, None)
+
+    for key in list(unknown.keys()):
+        unknown[key] = [c for c in unknown[key] if c.get("file") != filename]
+        if not unknown[key]:
+            unknown.pop(key, None)
+
+    for key in list(byte_anomalies.keys()):
+        byte_anomalies[key] = [c for c in byte_anomalies[key] if c.get("file") != filename]
+        if not byte_anomalies[key]:
+            byte_anomalies.pop(key, None)
+
+    for table_name in list(duplicate_tables.keys()):
+        dup = duplicate_tables[table_name]
+        if filename in dup.get("duplicate_files", []):
+            dup["duplicate_files"].remove(filename)
+        if dup.get("first_file") == filename and not dup["duplicate_files"]:
+            duplicate_tables.pop(table_name, None)
+
+    # table_source บอกว่า table ไหน "เจ้าของไฟล์แรก" คือไฟล์ไหน (ใช้ตัดสิน
+    # ว่า table ถัดไปที่ชื่อซ้ำเป็น duplicate หรือไม่) — สร้างใหม่จาก tables
+    # ที่เหลือหลังลบไฟล์เดิมออกแล้ว เพื่อให้ reparse ครั้งนี้นับ duplicate
+    # ได้ถูกต้องเทียบกับไฟล์อื่นที่เหลืออยู่ในเซสชัน
+    table_source: dict = {}
+    for key, cols in tables.items():
+        if not cols:
+            continue
+        if cols[0].get("is_duplicate"):
+            continue
+        base_table = key.split("__", 1)[0]
+        table_source[base_table] = cols[0].get("file")
+
+    parse_errors_by_file.pop(filename, None)
+
+    active_mapping = _load_mapping(data.get("source_db"), data.get("dest_db"))
+
+    file_parse_errors = _process_sql_file(
+        filename, body.sql_text, active_mapping,
+        tables, unknown, table_source, duplicate_tables, byte_anomalies,
+    )
+    if file_parse_errors:
+        parse_errors_by_file[filename] = file_parse_errors
+
+    data["file_sql_text"][filename] = body.sql_text
+    data["fk_errors"] = validate_fk(tables)
+
+    logger.info(
+        f"🔁 Reparsed '{filename}' in session {session_id} — "
+        f"{'มี' if file_parse_errors else 'ไม่มี'} parse error เหลือ"
+    )
+
+    return {
+        "tables":           tables,
+        "unknown":          unknown,
+        "fk_errors":        data["fk_errors"],
+        "byte_anomalies":   byte_anomalies,
+        "duplicate_tables": duplicate_tables,
+        "parse_errors":     parse_errors_by_file,
+    }
 
 @app.delete("/session/{session_id}")
 def delete_session(session_id: str, username: str | None = Query(default=None)):

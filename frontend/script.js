@@ -386,11 +386,14 @@ async function sendSQLToBackend(sqlFiles) {
     const unknownCount = Object.values(data.unknown || {}).flat().length;
     const anomalyCount = Object.values(data.byte_anomalies || {}).flat().length;
     const contentDups  = data.content_dup_warnings || [];
+    const parseErrCount = Object.values(data.parse_errors || {}).flat().length;
 
     if (unknownCount > 0) renderUnknownWarnings(data.unknown);
     if (data.fk_errors && data.fk_errors.length > 0) renderFKErrors(data.fk_errors);
     if (anomalyCount > 0) renderByteAnomalyWarnings(data.byte_anomalies);
     if (contentDups.length > 0) renderContentDupWarnings(contentDups);
+    lastParseErrors = data.parse_errors || {};
+    if (parseErrCount > 0) renderParseErrorWarnings(lastParseErrors);
 
     const dbPairLabel = data.source_db && data.dest_db
       ? ` [${data.source_db} → ${data.dest_db}]` : '';
@@ -398,7 +401,8 @@ async function sendSQLToBackend(sqlFiles) {
       `✓ Backend mapping สำเร็จ${dbPairLabel} — ${Object.keys(data.tables).length} table` +
       (unknownCount ? ` (⚠️ ${unknownCount} unknown type)` : '') +
       (anomalyCount ? ` (🔴 ${anomalyCount} byte anomaly)` : '') +
-      (contentDups.length ? ` (🔁 ${contentDups.length} content ซ้ำ)` : '')
+      (contentDups.length ? ` (🔁 ${contentDups.length} content ซ้ำ)` : '') +
+      (parseErrCount ? ` (🔴 ${parseErrCount} วงเล็บไม่ปิด)` : '')
     );
 
   } catch (err) {
@@ -511,11 +515,16 @@ async function syncSessionDiagnostics() {
   document.getElementById('unknownWarnings')?.remove();
   document.getElementById('byteAnomalyWarnings')?.remove();
   document.getElementById('fkErrorPanel')?.remove();
+  document.getElementById('parseErrorWarnings')?.remove();
 
   if (Object.values(data.unknown || {}).flat().length > 0) renderUnknownWarnings(data.unknown);
   if ((data.fk_errors || []).length > 0) renderFKErrors(data.fk_errors);
   if (Object.values(data.byte_anomalies || {}).flat().length > 0) {
     renderByteAnomalyWarnings(data.byte_anomalies);
+  }
+  lastParseErrors = data.parse_errors || {};
+  if (Object.values(lastParseErrors).flat().length > 0) {
+    renderParseErrorWarnings(lastParseErrors);
   }
 
   renderTypePanel();
@@ -541,6 +550,10 @@ async function fetchResult() {
     );
     if (Object.values(data.byte_anomalies || {}).flat().length > 0)
       renderByteAnomalyWarnings(data.byte_anomalies);
+    lastParseErrors = data.parse_errors || {};
+    if (Object.values(lastParseErrors).flat().length > 0) {
+      renderParseErrorWarnings(lastParseErrors);
+    }
     renderTypePanel();
     renderTables();
     showStatus('convertStatus', 'success', '✓ Refresh result สำเร็จ');
@@ -872,7 +885,185 @@ function renderContentDupWarnings(warnings) {
 }
 
 // ═══════════════════════════════════════════════════════════
-//  DOWNLOAD
+//  PARSE ERROR WARNINGS — วงเล็บ CREATE TABLE ไม่ปิดครบ
+// ═══════════════════════════════════════════════════════════
+//  parseErrors: { [filename]: [{ table, schema, error, message }, ...] }
+function renderParseErrorWarnings(parseErrors) {
+  document.getElementById('parseErrorWarnings')?.remove();
+  const entries = Object.entries(parseErrors || {});
+  const items = entries.flatMap(([filename, errs]) =>
+    (errs || []).map(err => {
+      const loc = err.schema ? `${escapeHtml(err.schema)}.${escapeHtml(err.table)}` : escapeHtml(err.table);
+      return `
+      <li>
+        <div class="anomaly-row">
+          <span class="anomaly-loc"><b>${loc}</b></span>
+          <span class="anomaly-tag">📄 ${escapeHtml(filename)}</span>
+        </div>
+        <div class="anomaly-detail">${escapeHtml(err.message || 'วงเล็บของ CREATE TABLE ไม่ปิดให้ครบ')}</div>
+        <div class="parse-error-actions">
+          <button class="btn-fix-sql" onclick="openSqlEditModal('${escapeHtmlAttr(filename)}','${escapeHtmlAttr(err.table)}')">✏️ เปิดแก้ไข</button>
+          <button class="btn-cancel-sql" onclick="dismissParseError('${escapeHtmlAttr(filename)}','${escapeHtmlAttr(err.table)}')">✕ ยกเลิก</button>
+        </div>
+      </li>`;
+    })
+  );
+  if (!items.length) return;
+
+  const div = document.createElement('div');
+  div.id        = 'parseErrorWarnings';
+  div.className = 'warn-panel byte-anomaly-panel';
+  div.innerHTML = `
+    <div class="warn-panel-header byte-anomaly-header">
+      <span>🔴 วงเล็บ CREATE TABLE ไม่ปิดครบ (${items.length} ตาราง)</span>
+      <div class="anomaly-actions">
+        <span class="anomaly-hint">ตารางเหล่านี้ไม่ถูกนำเข้าเพราะ SQL ไม่สมบูรณ์ — กดเปิดแก้ไขเพื่อพิมพ์แก้แล้ว parse ใหม่ หรือยกเลิกเพื่อข้ามตารางนี้ไป</span>
+        <button onclick="this.closest('#parseErrorWarnings').remove()">✕</button>
+      </div>
+    </div>
+    <ul>${items.join('')}</ul>`;
+  document.getElementById('tablesGrid').insertAdjacentElement('beforebegin', div);
+}
+
+function dismissParseError(filename, tableName) {
+  // ผู้ใช้เลือก "ยกเลิก" — ไม่ต้องเรียก backend อะไรเพิ่ม table นี้ก็ถูก
+  // ข้ามอยู่แล้วตั้งแต่ /convert (ไม่เคยถูกเพิ่มเข้า currentData) แค่ลบ
+  // รายการคำเตือนนี้ออกจาก UI พอ
+  if (lastParseErrors[filename]) {
+    lastParseErrors[filename] = lastParseErrors[filename].filter(e => e.table !== tableName);
+    if (!lastParseErrors[filename].length) delete lastParseErrors[filename];
+  }
+  renderParseErrorWarnings(lastParseErrors);
+  showStatus('uploadStatus', 'info', `ข้ามตาราง '${tableName}' แล้ว (ไม่ถูกนำเข้า)`);
+}
+
+// เก็บ parse_errors ล่าสุดไว้ใช้ตอนกด "ยกเลิก" บางรายการ (ไม่ลบทั้ง panel)
+let lastParseErrors = {};
+
+function openSqlEditModal(filename, tableName) {
+  const entry = uploadedFiles.find(f => f.name === filename);
+  if (!entry || !entry.fileObj) {
+    showStatus('uploadStatus', 'error', `❌ ไม่พบไฟล์ '${filename}' ในรายการที่อัปโหลด`);
+    return;
+  }
+
+  entry.fileObj.text().then(sqlText => {
+    const overlay = document.createElement('div');
+    overlay.className = 'table-modal-overlay';
+    overlay.id        = 'sqlEditModalOverlay';
+    overlay.addEventListener('click', e => { if (e.target === overlay) closeSqlEditModal(); });
+
+    overlay.innerHTML = `
+      <div class="table-modal sql-edit-modal" id="sqlEditModal">
+        <div class="table-modal-header">
+          <div class="table-modal-icon">✏️</div>
+          <div style="min-width:0;flex:1">
+            <div class="table-modal-title-row">
+              <div class="table-modal-title">แก้ไข SQL — ${escapeHtml(filename)}</div>
+            </div>
+            <div class="table-modal-meta">ตาราง '${escapeHtml(tableName)}' วงเล็บไม่ปิดครบ — แก้แล้วกด "Parse ใหม่"</div>
+          </div>
+          <button class="table-modal-close" onclick="closeSqlEditModal()" title="ปิด (Esc)">✕</button>
+        </div>
+        <div class="sql-edit-body">
+          <textarea id="sqlEditTextarea" class="sql-edit-textarea" spellcheck="false">${escapeHtml(sqlText)}</textarea>
+          <div class="sql-edit-status" id="sqlEditStatus"></div>
+        </div>
+        <div class="sql-edit-footer">
+          <button class="btn-cancel-sql" onclick="closeSqlEditModal()">ยกเลิก</button>
+          <button class="btn-fix-sql" id="sqlEditSaveBtn"
+            onclick="submitSqlEdit('${escapeHtmlAttr(filename)}')">🔁 Parse ใหม่</button>
+        </div>
+      </div>`;
+
+    document.body.appendChild(overlay);
+    document.body.style.overflow = 'hidden';
+    setTimeout(() => document.getElementById('sqlEditTextarea')?.focus(), 50);
+  }).catch(() => {
+    showStatus('uploadStatus', 'error', `❌ อ่านไฟล์ '${filename}' ไม่สำเร็จ`);
+  });
+}
+
+function closeSqlEditModal() {
+  const overlay = document.getElementById('sqlEditModalOverlay');
+  if (overlay) overlay.remove();
+  document.body.style.overflow = '';
+}
+
+async function submitSqlEdit(filename) {
+  const textarea = document.getElementById('sqlEditTextarea');
+  const statusEl  = document.getElementById('sqlEditStatus');
+  const saveBtn   = document.getElementById('sqlEditSaveBtn');
+  if (!textarea) return;
+
+  const newSqlText = textarea.value;
+
+  if (!sessionId) {
+    statusEl.textContent = '❌ ไม่พบ session — กรุณาอัปโหลดไฟล์ใหม่อีกครั้ง';
+    return;
+  }
+
+  saveBtn.disabled = true;
+  statusEl.textContent = '⏳ กำลัง parse ใหม่...';
+
+  try {
+    const res = await fetchWithApiFallback(`/reparse-table/${sessionId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename, sql_text: newSqlText }),
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      statusEl.textContent = `❌ ${err.detail || 'Parse ไม่สำเร็จ'}`;
+      saveBtn.disabled = false;
+      return;
+    }
+
+    const data = await res.json();
+
+    // อัปเดต File object ในหน่วยความจำให้ตรงกับ SQL ที่แก้ไว้ ป้องกัน
+    // ปัญหาถ้าผู้ใช้เปิดแก้ไขไฟล์เดิมอีกครั้งแล้วเห็น SQL เก่า
+    const entry = uploadedFiles.find(f => f.name === filename);
+    if (entry) {
+      try {
+        entry.fileObj = new File([newSqlText], filename, { type: 'text/plain' });
+      } catch (_) { /* ignore ถ้า browser ไม่รองรับ File constructor แบบนี้ */ }
+    }
+
+    // ลบ table ทั้งหมดของไฟล์นี้ออกจาก currentData ก่อน sync ใหม่ทั้งหมด
+    // จาก response (กันกรณีตารางถูกลบ/รวมกันใหม่)
+    Object.keys(currentData).forEach(key => {
+      if (currentData[key]?.fileName === filename) delete currentData[key];
+    });
+
+    applyBackendTables(
+      data.tables,
+      data.unknown || {},
+      data.byte_anomalies || {},
+      data.duplicate_tables || {},
+      data.fk_errors || []
+    );
+
+    lastParseErrors = data.parse_errors || {};
+    renderParseErrorWarnings(lastParseErrors);
+
+    const unknownCount = Object.values(data.unknown || {}).flat().length;
+    const anomalyCount = Object.values(data.byte_anomalies || {}).flat().length;
+    if (unknownCount > 0) renderUnknownWarnings(data.unknown);
+    if ((data.fk_errors || []).length > 0) renderFKErrors(data.fk_errors);
+    if (anomalyCount > 0) renderByteAnomalyWarnings(data.byte_anomalies);
+
+    closeSqlEditModal();
+    onAllDone();
+    showStatus('uploadStatus', 'success', `✓ Parse '${filename}' ใหม่สำเร็จ`);
+  } catch (e) {
+    statusEl.textContent = `❌ ${e.message || 'เกิดข้อผิดพลาด'}`;
+    saveBtn.disabled = false;
+  }
+}
+
+
 // ═══════════════════════════════════════════════════════════
 const MAP_HEADERS = ['file','ลำดับ','column_name','source_sql_type','raw_type','logical_type','final_type','nullable','is_pk','fk_ref'];
 
@@ -1199,6 +1390,7 @@ function renderModalTable(cols, src, isSql) {
 
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && _modalKey) closeTableModal();
+  if (e.key === 'Escape' && document.getElementById('sqlEditModalOverlay')) closeSqlEditModal();
 });
 
 // ═══════════════════════════════════════════════════════════

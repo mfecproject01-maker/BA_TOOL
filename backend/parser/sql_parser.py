@@ -37,6 +37,16 @@ _FK_LINE = re.compile(
     re.IGNORECASE
 )
 
+# [FIX-Bug] CREATE INDEX แยก parser ต่างหาก ไม่ปนกับ parse_sql เดิม
+# รองรับ: UNIQUE, CLUSTERED/NONCLUSTERED (SQL Server), IF NOT EXISTS,
+# schema-qualified index name, ON schema.table(col1, col2, ...)
+_INDEX_PATTERN = re.compile(
+    rf"\bcreate\s+(?:unique\s+)?(?:clustered\s+|nonclustered\s+)?index\s+"
+    rf"(?:if\s+not\s+exists\s+)?({_QUALIFIED_IDENTIFIER})\s+"
+    rf"on\s+({_QUALIFIED_IDENTIFIER})\s*\(([^)]*)\)",
+    re.IGNORECASE
+)
+
 
 def _clean_name(s: str) -> str:
     """ลบ quote ทุกชนิด + backticks + lowercase"""
@@ -295,14 +305,59 @@ def _split_sql_tokens(text: str) -> list[str]:
 
 
 def parse_sql(sql_text: str) -> list[dict]:
+    """
+    คงพฤติกรรมเดิมไว้ทุกประการสำหรับ caller เดิม (เช่น main.py /convert)
+    — คืนแค่ list[dict] ของ column เหมือนก่อนหน้านี้เสมอ
+    ถ้าต้องการรู้ด้วยว่ามี table ไหนวงเล็บไม่ปิด ให้ใช้ parse_sql_with_errors() แทน
+    """
+    tables, _errors = parse_sql_with_errors(sql_text)
+    return tables
+
+
+def parse_sql_with_errors(sql_text: str) -> tuple[list[dict], list[dict]]:
+    """
+    เหมือน parse_sql() ทุกอย่าง แต่คืน parse_errors เพิ่มมาด้วย
+    เป็น tuple (tables, parse_errors)
+
+    parse_errors แต่ละตัวมี:
+      {
+        "table": str,            # ชื่อ table (clean) ที่มีปัญหา
+        "schema": str | None,
+        "error": "UNBALANCED_PARENTHESES",
+        "message": str,          # ข้อความอธิบายเป็นภาษาไทย
+      }
+
+    เมื่อ table ใดถูก mark ว่า truncated (วงเล็บไม่ปิดครบ) จะ "ไม่"
+    เพิ่ม column ของ table นั้นเข้าไปใน `tables` เลย เพื่อไม่ให้ข้อมูลที่
+    ไม่น่าเชื่อถือหลุดไปแสดงผลรวมกับ table อื่นที่ปกติ — ผู้ใช้ต้องกด
+    แก้ไขและ parse ใหม่เท่านั้น
+    """
     tables = []
+    parse_errors: list[dict] = []
     sql_text = _strip_sql_comments(sql_text)
 
-    for table_name, body in _iter_create_table_blocks(sql_text):
+    for table_name, body, is_truncated in _iter_create_table_blocks(sql_text):
         name_parts = _identifier_parts(table_name)
         schema_name = _unquote_identifier(name_parts[-2]) if len(name_parts) > 1 else None
         table_original = _unquote_identifier(name_parts[-1]) if name_parts else _unquote_identifier(table_name)
         clean_table_name = _clean_name(name_parts[-1] if name_parts else table_name)
+
+        if is_truncated:
+            logger.warning(
+                "CREATE TABLE มีวงเล็บไม่ปิดครบ: table=%r schema=%r",
+                clean_table_name, schema_name,
+            )
+            parse_errors.append({
+                "table": clean_table_name,
+                "schema": schema_name,
+                "error": "UNBALANCED_PARENTHESES",
+                "message": (
+                    f"ตาราง '{clean_table_name}' วงเล็บของ CREATE TABLE ไม่ปิดให้ครบ "
+                    f"(ไฟล์อาจถูกตัดตอนหรือ export มาไม่สมบูรณ์) — กรุณาแก้ไข SQL แล้ว parse ใหม่"
+                ),
+            })
+            continue  # ไม่ parse column ของ table ที่วงเล็บไม่ครบ
+
         logger.debug(
             "CREATE TABLE matched: raw=%r schema=%r table=%r normalized_table=%r",
             table_name,
@@ -420,10 +475,68 @@ def parse_sql(sql_text: str) -> list[dict]:
               if t["fk"] else "")
         logger.debug(f"  {t['table']}.{t['column']} -> {t['type']} | {t['nullable']}{pk}{fk}")
 
-    return tables
+    return tables, parse_errors
+
+
+def parse_indexes(sql_text: str) -> list[dict]:
+    """
+    Parse CREATE INDEX statements แยกจาก parse_sql() โดยสิ้นเชิง
+    ไม่ผูกกับ schema/table ที่ parse_sql() เจอ เพราะ CREATE INDEX
+    อาจระบุ schema ไม่ตรงกับ CREATE TABLE ในไฟล์เดียวกัน (เช่น
+    table มี schema แต่ index ไม่ใส่ schema) — เก็บตามที่ระบุไว้จริง
+    โดยไม่พยายามเดาหรือจับคู่ schema ให้ตรงกัน
+
+    คืนค่า list ของ dict:
+      {
+        "index_name": str,
+        "schema": str | None,   # schema ของ "index" เอง ถ้ามีระบุ
+        "table": str,           # ชื่อ table แบบ clean (lowercase, ไม่มี quote)
+        "table_schema": str | None,  # schema ของ table ที่ระบุใน ON clause
+        "columns": list[str],
+      }
+    """
+    indexes: list[dict] = []
+    clean_sql = _strip_sql_comments(sql_text)
+
+    for match in _INDEX_PATTERN.finditer(clean_sql):
+        raw_index_name, raw_table_name, raw_columns = match.groups()
+
+        index_parts = _identifier_parts(raw_index_name)
+        index_schema = _unquote_identifier(index_parts[-2]) if len(index_parts) > 1 else None
+        index_name = _clean_name(index_parts[-1] if index_parts else raw_index_name)
+
+        table_parts = _identifier_parts(raw_table_name)
+        table_schema = _unquote_identifier(table_parts[-2]) if len(table_parts) > 1 else None
+        table_name = _clean_name(table_parts[-1] if table_parts else raw_table_name)
+
+        columns = _parse_column_list(raw_columns)
+
+        logger.debug(
+            "CREATE INDEX matched: index=%r (schema=%r) on table=%r (schema=%r) columns=%r",
+            index_name, index_schema, table_name, table_schema, columns,
+        )
+
+        indexes.append({
+            "index_name": index_name,
+            "schema": index_schema,
+            "table": table_name,
+            "table_schema": table_schema,
+            "columns": columns,
+        })
+
+    return indexes
 
 
 def _iter_create_table_blocks(sql_text: str):
+    """
+    Yields (table_name, body, is_truncated).
+
+    is_truncated=True หมายถึงวงเล็บของ CREATE TABLE นี้ไม่ปิดให้ครบ
+    (เช่น EOF มาก่อน หรือเจอ CREATE TABLE/CREATE INDEX ตัวถัดไปทั้งที่
+    depth ยังไม่กลับเป็น 0) — ในกรณีนี้ body ที่คืนมาคือเนื้อหาทั้งหมด
+    เท่าที่อ่านได้ก่อนจะเจอจุดตัด ไม่ใช่ body ที่ถูกต้องสมบูรณ์ ผู้เรียก
+    ต้องไม่ถือว่า column ที่ parse ได้จาก body นี้น่าเชื่อถือเต็มที่
+    """
     for match in _TABLE_PATTERN.finditer(sql_text):
         table_name = match.group(1)
         open_idx = match.end() - 1
@@ -434,6 +547,7 @@ def _iter_create_table_blocks(sql_text: str):
         in_backtick = False
 
         idx = open_idx
+        closed = False
         while idx < len(sql_text):
             ch = sql_text[idx]
             next_ch = sql_text[idx + 1] if idx + 1 < len(sql_text) else ""
@@ -465,7 +579,19 @@ def _iter_create_table_blocks(sql_text: str):
                 idx += 1
                 continue
 
-            if ch == "'":
+            # [FIX-Bug] ป้องกัน body ที่วงเล็บไม่ปิดกินไปถึง statement ถัดไป
+            # ถ้า depth ยังไม่กลับเป็น 0 แล้วเจอ CREATE TABLE/INDEX ตัวใหม่จริงๆ
+            # (เช็คด้วย _TABLE_PATTERN / _INDEX_PATTERN ตรงตำแหน่งนี้ ไม่ใช่แค่
+            # substring "create" เฉยๆ เพราะอาจไปชนกับชื่อคอลัมน์เช่น "CreatedAt"
+            # หรือ "create_date" ที่ไม่ใช่ statement จริง)
+            if depth > 0 and ch in "Cc" and sql_text[idx:idx + 6].lower() == "create":
+                boundary_ok = (idx == 0 or sql_text[idx - 1] in " \t\r\n;(,")
+                if boundary_ok and (
+                    _TABLE_PATTERN.match(sql_text, idx)
+                    or _INDEX_PATTERN.match(sql_text, idx)
+                ):
+                    break
+            elif ch == "'":
                 in_single = True
             elif ch == '"':
                 in_double = True
@@ -478,9 +604,17 @@ def _iter_create_table_blocks(sql_text: str):
             elif ch == ")":
                 depth -= 1
                 if depth == 0:
-                    yield table_name, sql_text[open_idx + 1:idx]
+                    yield table_name, sql_text[open_idx + 1:idx], False
+                    closed = True
                     break
             idx += 1
+
+        if not closed and idx >= len(sql_text):
+            # เจอ EOF ก่อนวงเล็บปิดครบ — body คือทั้งหมดที่เหลือ
+            yield table_name, sql_text[open_idx + 1:idx], True
+        elif not closed:
+            # ตัดจบเพราะเจอ CREATE ตัวใหม่ทั้งที่ depth ยังไม่ครบ
+            yield table_name, sql_text[open_idx + 1:idx], True
 
 
 def validate_fk(tables: dict[str, list[dict]]) -> list:
