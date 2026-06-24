@@ -12,7 +12,7 @@ import os
 
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, Response
 from pydantic import BaseModel, field_validator
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
@@ -740,6 +740,43 @@ def delete_session(session_id: str, username: str | None = Query(default=None)):
     raise HTTPException(404, "Session not found")
 
 # ── Export endpoints ──────────────────────────────────────
+@app.head("/export/{session_id}/xlsx")
+def export_all_head(session_id: str, tables: List[str] = Query(default=None)):
+    """
+    [FIX-Bug] HEAD version ของ /export/{session_id}/xlsx — ใช้สำหรับขั้นตอน
+    "กำลังตรวจสอบไฟล์" ฝั่ง frontend ก่อนเริ่มโหลดจริง ต้อง build buffer จริง
+    เพื่อรู้ขนาดที่แน่นอน (XLSX/CSV ไม่มีทางประมาณขนาดล่วงหน้าได้แม่นยำ) แต่ไม่ส่ง
+    body กลับ ลดข้อมูลที่ส่งจริงๆเหลือแค่ header เพื่อให้ตรวจสอบเร็วและไม่เปลือง
+    bandwidth ของไฟล์ทั้งไฟล์ซ้ำสองรอบ
+    """
+    data = get_cached_data(session_id)
+    all_tables = data["tables"]
+    selected = {k: v for k, v in all_tables.items() if tables is None or k in tables}
+    if not selected:
+        raise HTTPException(404, "ไม่พบตารางที่ระบุในเซสชันนี้")
+    byte_anomalies = {k: v for k, v in data.get("byte_anomalies", {}).items() if k in selected}
+
+    file_names = sorted({col["file"] for cols in selected.values() for col in cols if col.get("file")})
+    file_name = ", ".join(file_names) if file_names else None
+
+    buf = export_confluent_xlsx(
+        selected,
+        byte_anomalies=byte_anomalies,
+        source_db=data.get("source_db"),
+        dest_db=data.get("dest_db"),
+        file_name=file_name,
+    )
+    size = buf.getbuffer().nbytes
+    return Response(
+        status_code=200,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{_make_export_filename(list(selected.keys()), "xlsx")}"',
+            "Content-Length": str(size),
+        },
+    )
+
+
 @app.get("/export/{session_id}/xlsx")
 def export_all(session_id: str, tables: List[str] = Query(default=None)):
     data = get_cached_data(session_id)
@@ -765,6 +802,41 @@ def export_all(session_id: str, tables: List[str] = Query(default=None)):
             "Content-Length": str(buf.getbuffer().nbytes),
         },
     )
+
+@app.head("/export/{session_id}/xlsx/{table_name}")
+def export_one_head(session_id: str, table_name: str):
+    data = get_cached_data(session_id)
+    columns = data["tables"].get(table_name)
+    if columns is None:
+        raise HTTPException(404, f"Table '{table_name}' not found")
+
+    anomalies = data.get("byte_anomalies", {}).get(table_name)
+    if anomalies:
+        anomalies = [a for a in anomalies if isinstance(a, dict)]
+
+    file_names = sorted({col["file"] for col in columns if col.get("file")})
+    file_name = ", ".join(file_names) if file_names else None
+
+    buf = export_table_xlsx(
+        columns,
+        table_name,
+        anomalies=anomalies,
+        source_db=data.get("source_db"),
+        dest_db=data.get("dest_db"),
+        file_name=file_name,
+    )
+    size = buf.getbuffer().nbytes
+    return Response(
+        status_code=200,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f'attachment; filename="{_make_export_filename([table_name], "xlsx")}"',
+            "Content-Length": str(size),
+        },
+    )
+
+
+@app.get("/export/{session_id}/xlsx/{table_name}")
 def export_one(session_id: str, table_name: str):
     data = get_cached_data(session_id)
     columns = data["tables"].get(table_name)
@@ -796,6 +868,27 @@ def export_one(session_id: str, table_name: str):
         },
     )
 
+@app.head("/export/{session_id}/csv")
+def export_all_csv_head(session_id: str, tables: List[str] = Query(default=None)):
+    data = get_cached_data(session_id)
+    all_tables = data["tables"]
+    selected = {k: v for k, v in all_tables.items() if tables is None or k in tables}
+    if not selected:
+        raise HTTPException(404, "ไม่พบตารางที่ระบุในเซสชันนี้")
+    byte_anomalies = {k: v for k, v in data.get("byte_anomalies", {}).items() if k in selected}
+
+    buf = export_all_csv(selected, byte_anomalies=byte_anomalies)
+    size = buf.getbuffer().nbytes
+    return Response(
+        status_code=200,
+        media_type="text/csv; charset=utf-8-sig",
+        headers={
+            "Content-Disposition": f'attachment; filename="{_make_export_filename(list(selected.keys()), "csv")}"',
+            "Content-Length": str(size),
+        },
+    )
+
+
 @app.get("/export/{session_id}/csv")
 def export_all_csv_endpoint(session_id: str, tables: List[str] = Query(default=None)):
     data = get_cached_data(session_id)
@@ -812,6 +905,26 @@ def export_all_csv_endpoint(session_id: str, tables: List[str] = Query(default=N
             "Content-Length": str(buf.getbuffer().nbytes),
         },
     )
+
+@app.head("/export/{session_id}/csv/{table_name}")
+def export_one_csv_head(session_id: str, table_name: str):
+    data = get_cached_data(session_id)
+    columns = data["tables"].get(table_name)
+    if columns is None:
+        raise HTTPException(404, f"Table '{table_name}' not found")
+
+    anomalies = data.get("byte_anomalies", {}).get(table_name)
+    buf = export_table_csv(columns, table_name, anomalies=anomalies)
+    size = buf.getbuffer().nbytes
+    return Response(
+        status_code=200,
+        media_type="text/csv; charset=utf-8-sig",
+        headers={
+            "Content-Disposition": f'attachment; filename="{_make_export_filename([table_name], "csv")}"',
+            "Content-Length": str(size),
+        },
+    )
+
 
 @app.get("/export/{session_id}/csv/{table_name}")
 def export_one_csv(session_id: str, table_name: str):

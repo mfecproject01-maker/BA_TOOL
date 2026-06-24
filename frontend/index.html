@@ -37,12 +37,64 @@
 
 <div class="loading-bar" id="loadingBar"></div>
 
-<!-- EXPORT/DOWNLOAD PROGRESS BAR (determinate, real-time) -->
-<div class="export-progress" id="exportProgress" aria-hidden="true">
-  <div class="export-progress-track">
-    <div class="export-progress-fill" id="exportProgressFill"></div>
+<!-- DOWNLOAD / EXPORT PROGRESS MODAL — 3-step status (ตรวจสอบ → ดาวน์โหลด → เสร็จสิ้น) -->
+<div class="dl-modal-overlay" id="dlProgressOverlay" aria-hidden="true">
+  <div class="dl-modal" id="dlProgressModal" role="dialog" aria-modal="true" aria-labelledby="dlModalTitle">
+    <div class="dl-modal-header">
+      <span id="dlModalTitle">กำลังดาวน์โหลด</span>
+    </div>
+
+    <ol class="dl-steps" id="dlSteps">
+      <li class="dl-step" data-step="0" data-status="pending">
+        <span class="dl-step-icon"></span>
+        <span class="dl-step-label">กำลังตรวจสอบไฟล์</span>
+      </li>
+      <li class="dl-step" data-step="1" data-status="pending">
+        <span class="dl-step-icon"></span>
+        <span class="dl-step-label">กำลังดาวน์โหลด</span>
+      </li>
+      <li class="dl-step" data-step="2" data-status="pending">
+        <span class="dl-step-icon"></span>
+        <span class="dl-step-label">ดาวน์โหลดเสร็จสิ้น</span>
+      </li>
+    </ol>
+
+    <div class="dl-progress-section" id="dlProgressSection">
+      <div class="dl-progress-track">
+        <div class="dl-progress-fill" id="dlProgressFill"></div>
+      </div>
+      <div class="dl-progress-meta">
+        <span class="dl-progress-pct" id="dlProgressPct">0%</span>
+        <span class="dl-progress-bytes" id="dlProgressBytes"></span>
+      </div>
+    </div>
+
+    <div class="dl-result dl-result-success" id="dlResultSuccess" hidden>
+      <div class="dl-result-icon dl-result-icon-success">✓</div>
+      <div class="dl-result-text">
+        <div class="dl-result-title">ดาวน์โหลดสำเร็จ</div>
+        <div class="dl-result-detail" id="dlResultFilename"></div>
+        <div class="dl-result-meta">
+          <span id="dlResultSize"></span>
+          <span class="dl-result-sep">·</span>
+          <span id="dlResultTime"></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="dl-result dl-result-error" id="dlResultError" hidden>
+      <div class="dl-result-icon dl-result-icon-error">✕</div>
+      <div class="dl-result-text">
+        <div class="dl-result-title">ดาวน์โหลดไม่สำเร็จ</div>
+        <div class="dl-result-detail" id="dlErrorMessage"></div>
+      </div>
+    </div>
+
+    <div class="dl-modal-footer">
+      <button class="dl-btn dl-btn-secondary" id="dlBtnClose" onclick="closeDownloadModal()">ปิด</button>
+      <button class="dl-btn dl-btn-primary" id="dlBtnRetry" onclick="retryDownload()" hidden>↻ ลองใหม่</button>
+    </div>
   </div>
-  <span class="export-progress-label" id="exportProgressLabel">0%</span>
 </div>
 
 

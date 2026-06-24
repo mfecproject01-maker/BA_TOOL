@@ -58,45 +58,142 @@ async function fetchWithApiFallback(path, options) {
 // ใช้ ReadableStream + Content-Length เพื่อรายงาน progress แบบ real-time
 // (ไม่ใช้ Axios เพราะโปรเจกต์นี้ใช้ native fetch ทั้งหมดอยู่แล้ว)
 
-function showExportProgress() {
-  const bar = document.getElementById('exportProgress');
-  if (!bar) return;
-  bar.classList.remove('fade-out');
-  bar.classList.add('visible');
-  bar.setAttribute('aria-hidden', 'false');
-  updateExportProgress(0, true); // เริ่มที่ indeterminate จนกว่าจะรู้ total bytes
+// ═══════════════════════════════════════════════════════════
+//  DOWNLOAD / EXPORT PROGRESS MODAL
+//  3 ขั้นตอน: ตรวจสอบไฟล์ → ดาวน์โหลด → เสร็จสิ้น
+//  สถานะต่อขั้นตอน: pending / processing / completed / error
+// ═══════════════════════════════════════════════════════════
+const DL_STEP_VALIDATE = 0;
+const DL_STEP_DOWNLOAD = 1;
+const DL_STEP_DONE      = 2;
+
+let _dlStartTime   = null;
+let _dlRetryFn      = null;   // เก็บ callback ไว้เผื่อกด "ลองใหม่"
+let _dlCloseLock    = false;  // กัน user ปิด modal ระหว่างกำลังโหลดจริง (ปิดได้แค่ตอน success/error)
+
+function formatBytes(bytes) {
+  if (bytes == null || isNaN(bytes)) return '';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
 }
 
-function updateExportProgress(percent, indeterminate = false) {
-  const fill  = document.getElementById('exportProgressFill');
-  const label = document.getElementById('exportProgressLabel');
-  if (!fill || !label) return;
+function formatElapsed(ms) {
+  if (ms < 1000) return `${ms} ms`;
+  return `${(ms / 1000).toFixed(1)} วินาที`;
+}
+
+function openDownloadModal(retryFn) {
+  _dlStartTime = Date.now();
+  _dlRetryFn   = retryFn || null;
+  _dlCloseLock = true;
+
+  const overlay = document.getElementById('dlProgressOverlay');
+  if (!overlay) return;
+
+  // reset state ทั้งหมดทุกครั้งที่เปิดใหม่
+  document.querySelectorAll('#dlSteps .dl-step').forEach(li => {
+    li.dataset.status = 'pending';
+  });
+  document.getElementById('dlProgressSection').hidden = false;
+  document.getElementById('dlResultSuccess').hidden   = true;
+  document.getElementById('dlResultError').hidden     = true;
+  document.getElementById('dlBtnRetry').hidden        = true;
+  document.getElementById('dlBtnClose').textContent   = 'ยกเลิก';
+  setDownloadProgress(0, true);
+  document.getElementById('dlProgressBytes').textContent = '';
+
+  overlay.setAttribute('aria-hidden', 'false');
+  overlay.classList.add('visible');
+
+  setDownloadStep(DL_STEP_VALIDATE, 'processing');
+}
+
+function closeDownloadModal() {
+  if (_dlCloseLock) return; // ยังกำลังโหลดอยู่จริง ไม่ให้ปิดเฉยๆแบบไม่รู้ผล
+  const overlay = document.getElementById('dlProgressOverlay');
+  if (overlay) {
+    overlay.classList.remove('visible');
+    overlay.setAttribute('aria-hidden', 'true');
+  }
+  _dlRetryFn = null;
+}
+
+function setDownloadStep(stepIndex, status) {
+  const li = document.querySelector(`#dlSteps .dl-step[data-step="${stepIndex}"]`);
+  if (li) li.dataset.status = status;
+}
+
+function setDownloadProgress(percent, indeterminate = false) {
+  const fill  = document.getElementById('dlProgressFill');
+  const pct   = document.getElementById('dlProgressPct');
+  if (!fill || !pct) return;
   fill.classList.toggle('indeterminate', indeterminate);
-  if (!indeterminate) {
+  if (indeterminate) {
+    pct.textContent = '...';
+  } else {
     const clamped = Math.max(0, Math.min(100, Math.round(percent)));
     fill.style.width = clamped + '%';
-    label.textContent = clamped + '%';
-  } else {
-    label.textContent = '...';
+    pct.textContent = clamped + '%';
   }
 }
 
-function hideExportProgress(immediate = false) {
-  const bar = document.getElementById('exportProgress');
-  if (!bar) return;
-  if (immediate) {
-    bar.classList.remove('visible', 'fade-out');
-    bar.setAttribute('aria-hidden', 'true');
-    return;
+function setDownloadBytes(received, total) {
+  const el = document.getElementById('dlProgressBytes');
+  if (!el) return;
+  if (total) {
+    el.textContent = `${formatBytes(received)} / ${formatBytes(total)}`;
+  } else if (received) {
+    el.textContent = formatBytes(received);
+  } else {
+    el.textContent = '';
   }
-  // เมื่อถึง 100% ให้ค้างไว้สักครู่ให้ผู้ใช้เห็น แล้ว fade out
-  updateExportProgress(100, false);
-  setTimeout(() => {
-    bar.classList.add('fade-out');
-    bar.setAttribute('aria-hidden', 'true');
-    setTimeout(() => bar.classList.remove('visible', 'fade-out'), 400);
-  }, 250);
 }
+
+function showDownloadSuccess(filename, sizeBytes) {
+  setDownloadStep(DL_STEP_VALIDATE, 'completed');
+  setDownloadStep(DL_STEP_DOWNLOAD, 'completed');
+  setDownloadStep(DL_STEP_DONE, 'completed');
+  setDownloadProgress(100, false);
+
+  const elapsedMs = Date.now() - (_dlStartTime || Date.now());
+
+  document.getElementById('dlProgressSection').hidden = true;
+  document.getElementById('dlResultSuccess').hidden   = false;
+  document.getElementById('dlResultFilename').textContent = filename;
+  document.getElementById('dlResultSize').textContent = sizeBytes ? formatBytes(sizeBytes) : '';
+  document.getElementById('dlResultTime').textContent = formatElapsed(elapsedMs);
+  document.getElementById('dlBtnClose').textContent = 'ปิด';
+  document.getElementById('dlBtnRetry').hidden = true;
+
+  _dlCloseLock = false;
+
+  // ปิดให้อัตโนมัติหลังเสร็จสักพัก (ผู้ใช้ยังกดปิดเองได้ทันทีถ้าต้องการ)
+  setTimeout(() => {
+    const overlay = document.getElementById('dlProgressOverlay');
+    if (overlay?.classList.contains('visible')) closeDownloadModal();
+  }, 2200);
+}
+
+function showDownloadError(message, currentStep) {
+  setDownloadStep(currentStep, 'error');
+  document.getElementById('dlProgressSection').hidden = true;
+  document.getElementById('dlResultSuccess').hidden = true;
+  document.getElementById('dlResultError').hidden   = false;
+  document.getElementById('dlErrorMessage').textContent = message || 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ กรุณาลองใหม่';
+  document.getElementById('dlBtnClose').textContent = 'ปิด';
+  document.getElementById('dlBtnRetry').hidden = !_dlRetryFn;
+
+  _dlCloseLock = false;
+}
+
+function retryDownload() {
+  const fn = _dlRetryFn;
+  if (!fn) return;
+  fn();
+}
+
+
 
 /**
  * เหมือน fetchWithApiFallback แต่ stream อ่าน response.body เพื่อรายงาน progress
@@ -112,7 +209,7 @@ async function fetchBlobWithProgress(path, options, onProgress) {
 
   // ถ้า browser ไม่รองรับ streaming body หรือไม่มี Content-Length ให้ fallback เป็น res.blob() ปกติ
   if (!res.body || !res.body.getReader || !total) {
-    if (onProgress) onProgress(null); // แจ้ง caller ว่าไม่รู้ progress จริง (ให้โชว์ indeterminate)
+    if (onProgress) onProgress(null, 0, 0); // แจ้ง caller ว่าไม่รู้ progress จริง (ให้โชว์ indeterminate)
     const blob = await res.blob();
     return { ok: true, status: res.status, blob };
   }
@@ -126,7 +223,7 @@ async function fetchBlobWithProgress(path, options, onProgress) {
     if (done) break;
     chunks.push(value);
     received += value.length;
-    if (onProgress) onProgress(Math.round((received * 100) / total));
+    if (onProgress) onProgress(Math.round((received * 100) / total), received, total);
   }
 
   const blob = new Blob(chunks);
@@ -1087,40 +1184,119 @@ async function downloadTable(key, fmt) {
   if (!t) return;
 
   if (t.backendCols && sessionId && fmt === 'csv') {
-    setLoading(true);
-    showExportProgress();
-    try {
-      const res = await fetchBlobWithProgress(
-        `/export/${sessionId}/csv/${key}`,
-        undefined,
-        pct => updateExportProgress(pct, pct === null)
-      );
-      if (!res.ok) throw new Error((await res.json?.().catch(() => ({})) || {}).detail || res.statusText);
-      triggerDownload(res.blob, `${key}.csv`);
-      hideExportProgress();
-    } catch (err) {
-      hideExportProgress(true);
-      showStatus('convertStatus', 'error', '❌ ' + err.message);
-    } finally { setLoading(false); }
+    await runBackendDownload({
+      path: `/export/${sessionId}/csv/${key}`,
+      filename: `${key}.csv`,
+    });
     return;
   }
 
-  const headers = t.backendCols ? MAP_HEADERS : t.headers;
-  const rows    = t.backendCols ? toMappingRows(t.backendCols) : t.rows;
-  const name    = t.backendCols ? key + '_mapping' : key;
+  await runLocalDownload(() => {
+    const headers = t.backendCols ? MAP_HEADERS : t.headers;
+    const rows    = t.backendCols ? toMappingRows(t.backendCols) : t.rows;
+    const name    = t.backendCols ? key + '_mapping' : key;
 
-  if (fmt === 'csv') {
-    const body = [headers.map(escCSV).join(','),
-      ...rows.map(r => headers.map(h => escCSV(r[h] ?? '')).join(','))
-    ].join('\n');
-    triggerDownload(new Blob(['\uFEFF' + body], { type: 'text/csv;charset=utf-8;' }), name + '.csv');
-  } else {
-    const wb = XLSX.utils.book_new();
-    const ws = makeSheet(rows, headers);
-    if (t.backendCols) ws['!cols'] = [{wch:8},{wch:24},{wch:16},{wch:14},{wch:14},{wch:20},{wch:32},{wch:12}];
-    XLSX.utils.book_append_sheet(wb, ws, 'data');
-    XLSX.writeFile(wb, name + '.xlsx');
-  }
+    if (fmt === 'csv') {
+      const body = [headers.map(escCSV).join(','),
+        ...rows.map(r => headers.map(h => escCSV(r[h] ?? '')).join(','))
+      ].join('\n');
+      const blob = new Blob(['\uFEFF' + body], { type: 'text/csv;charset=utf-8;' });
+      return { blob, filename: name + '.csv' };
+    } else {
+      const wb = XLSX.utils.book_new();
+      const ws = makeSheet(rows, headers);
+      if (t.backendCols) ws['!cols'] = [{wch:8},{wch:24},{wch:16},{wch:14},{wch:14},{wch:20},{wch:32},{wch:12}];
+      XLSX.utils.book_append_sheet(wb, ws, 'data');
+      const wbout = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      const blob = new Blob([wbout], { type: 'application/octet-stream' });
+      return { blob, filename: name + '.xlsx' };
+    }
+  });
+}
+
+/**
+ * Flow ดาวน์โหลดที่ผ่าน backend (มี Content-Length จริง รายงาน progress ได้แม่นยำ)
+ * ใช้ modal 3 ขั้นตอน: ตรวจสอบไฟล์ → ดาวน์โหลด → เสร็จสิ้น
+ */
+async function runBackendDownload({ path, filename }) {
+  const attempt = async () => {
+    openDownloadModal(attempt); // ส่งตัวเองเป็น retry callback
+
+    // ── ขั้นตอน 1: ตรวจสอบไฟล์ ──────────────────────────
+    // ยิง HEAD ไปที่ endpoint export จริงก่อน เพื่อเช็คว่า session/table
+    // ยังอยู่จริงไหม และรู้ขนาดไฟล์ล่วงหน้า — ถ้าพังตรงนี้ ผู้ใช้จะรู้ทันที
+    // ก่อนที่จะคิดว่าระบบเริ่มโหลดจริงไปแล้ว (ดีกว่าให้พังกลางขั้นดาวน์โหลด)
+    if (!sessionId) {
+      showDownloadError('ไม่พบ session — กรุณาอัปโหลดและแปลงไฟล์ก่อนดาวน์โหลด', DL_STEP_VALIDATE);
+      return;
+    }
+
+    let knownSize = null;
+    try {
+      const headRes = await fetchWithApiFallback(path, { method: 'HEAD' });
+      if (!headRes.ok) {
+        const errBody = await headRes.json?.().catch(() => ({})) || {};
+        throw new Error(errBody.detail || headRes.statusText || 'ไม่พบไฟล์ที่ต้องการดาวน์โหลด');
+      }
+      const cl = headRes.headers.get('Content-Length');
+      knownSize = cl ? parseInt(cl, 10) : null;
+    } catch (err) {
+      showDownloadError(err.message || 'ตรวจสอบไฟล์ไม่สำเร็จ', DL_STEP_VALIDATE);
+      showStatus('convertStatus', 'error', '❌ ' + err.message);
+      return;
+    }
+
+    setDownloadStep(DL_STEP_VALIDATE, 'completed');
+    setDownloadStep(DL_STEP_DOWNLOAD, 'processing');
+    if (knownSize) setDownloadBytes(0, knownSize); // โชว์ขนาดทั้งหมดทันทีตั้งแต่ก่อนเริ่มโหลด
+
+    setLoading(true);
+    try {
+      const res = await fetchBlobWithProgress(path, undefined, (pct, received, total) => {
+        setDownloadProgress(pct, pct === null);
+        setDownloadBytes(received, total || knownSize);
+      });
+      if (!res.ok) {
+        const errBody = await res.json?.().catch(() => ({})) || {};
+        throw new Error(errBody.detail || res.statusText || 'ดาวน์โหลดไม่สำเร็จ');
+      }
+      triggerDownload(res.blob, filename);
+      showDownloadSuccess(filename, res.blob.size);
+    } catch (err) {
+      showDownloadError(err.message, DL_STEP_DOWNLOAD);
+      showStatus('convertStatus', 'error', '❌ ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  await attempt();
+}
+
+/**
+ * Flow ดาวน์โหลดที่ generate ฝั่ง client (CSV/XLSX จากข้อมูล local ไม่ผ่าน network)
+ * ใช้ modal เดียวกันเพื่อความสม่ำเสมอ — ขั้นตอน "ดาวน์โหลด" จะเร็วมากเพราะไม่มี network
+ * แต่ยังคงแสดงครบ 3 ขั้นตอนเพื่อให้ผู้ใช้มั่นใจว่าไม่ใช่ระบบค้าง
+ */
+async function runLocalDownload(buildFn) {
+  const attempt = async () => {
+    openDownloadModal(attempt);
+    await new Promise(r => setTimeout(r, 200));
+    setDownloadStep(DL_STEP_VALIDATE, 'completed');
+    setDownloadStep(DL_STEP_DOWNLOAD, 'processing');
+    setDownloadProgress(0, true);
+
+    try {
+      const { blob, filename } = buildFn();
+      setDownloadProgress(100, false);
+      triggerDownload(blob, filename);
+      showDownloadSuccess(filename, blob.size);
+    } catch (err) {
+      showDownloadError(err.message || 'สร้างไฟล์ไม่สำเร็จ', DL_STEP_DOWNLOAD);
+    }
+  };
+
+  await attempt();
 }
 
 async function downloadAllCSV() { showTableSelectorModal('csv'); }
@@ -1391,6 +1567,13 @@ function renderModalTable(cols, src, isSql) {
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape' && _modalKey) closeTableModal();
   if (e.key === 'Escape' && document.getElementById('sqlEditModalOverlay')) closeSqlEditModal();
+  if (e.key === 'Escape' && document.getElementById('dlProgressOverlay')?.classList.contains('visible')) {
+    closeDownloadModal();
+  }
+});
+
+document.getElementById('dlProgressOverlay')?.addEventListener('click', e => {
+  if (e.target.id === 'dlProgressOverlay') closeDownloadModal();
 });
 
 // ═══════════════════════════════════════════════════════════
@@ -2228,24 +2411,10 @@ async function downloadTableXLSX(tableName) {
     return;
   }
 
-  setLoading(true);
-  showExportProgress();
-  try {
-    const res = await fetchBlobWithProgress(
-      `/export/${sessionId}/xlsx/${tableName}`,
-      undefined,
-      pct => updateExportProgress(pct, pct === null)
-    );
-    if (!res.ok) throw new Error((await res.json?.().catch(()=>({})) || {}).detail || res.statusText);
-    triggerDownload(res.blob, makeExportFilename([tableName], 'xlsx'));
-    hideExportProgress();
-    showStatus('convertStatus', 'success', `✓ ดาวน์โหลด ${tableName}_confluent.xlsx สำเร็จ`);
-  } catch (err) {
-    hideExportProgress(true);
-    showStatus('convertStatus', 'error', '❌ ' + err.message);
-  } finally {
-    setLoading(false);
-  }
+  await runBackendDownload({
+    path: `/export/${sessionId}/xlsx/${tableName}`,
+    filename: makeExportFilename([tableName], 'xlsx'),
+  });
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2402,25 +2571,12 @@ function showTableSelectorModal(fmt) {
 
 async function doExportSelected(fmt, selectedKeys) {
   if (!selectedKeys.length) return;
-  const qs  = selectedKeys.map(k => `tables=${encodeURIComponent(k)}`).join('&');
-  setLoading(true);
-  showExportProgress();
-  try {
-    const res = await fetchBlobWithProgress(
-      `/export/${sessionId}/${fmt}?${qs}`,
-      undefined,
-      pct => updateExportProgress(pct, pct === null)
-    );
-    if (!res.ok) throw new Error((await res.json?.().catch(() => ({})) || {}).detail || res.statusText);
-    triggerDownload(res.blob, makeExportFilename(selectedKeys, fmt));
-    hideExportProgress();
-    showStatus('convertStatus', 'success', `✓ Export ${fmt.toUpperCase()} สำเร็จ (${selectedKeys.length} tables)`);
-  } catch (err) {
-    hideExportProgress(true);
-    showStatus('convertStatus', 'error', '❌ ' + err.message);
-  } finally {
-    setLoading(false);
-  }
+  const qs = selectedKeys.map(k => `tables=${encodeURIComponent(k)}`).join('&');
+
+  await runBackendDownload({
+    path: `/export/${sessionId}/${fmt}?${qs}`,
+    filename: makeExportFilename(selectedKeys, fmt),
+  });
 }
 
 // ═══════════════════════════════════════════════════════════
