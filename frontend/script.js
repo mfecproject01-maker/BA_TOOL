@@ -487,6 +487,7 @@ async function sendSQLToBackend(sqlFiles) {
 
     if (contentDups.length > 0) renderContentDupWarnings(contentDups);
     lastParseErrors = data.parse_errors || {};
+    renderParseErrorWarnings(lastParseErrors);
 
     const dbPairLabel = data.source_db && data.dest_db
       ? ` [${data.source_db} → ${data.dest_db}]` : '';
@@ -772,6 +773,7 @@ async function syncSessionDiagnostics() {
   document.getElementById('parseErrorWarnings')?.remove();
 
   lastParseErrors = data.parse_errors || {};
+  renderParseErrorWarnings(lastParseErrors);
   renderTypePanel();
   renderTables();
   if (sessionId) {
@@ -797,6 +799,7 @@ async function fetchResult() {
       data.fk_errors || []
     );
     lastParseErrors = data.parse_errors || {};
+    renderParseErrorWarnings(lastParseErrors);
     renderTypePanel();
     renderTables();
     if (sessionId) {
@@ -1233,6 +1236,7 @@ async function submitSqlEdit(filename) {
     );
 
     lastParseErrors = data.parse_errors || {};
+    renderParseErrorWarnings(lastParseErrors);
 
     const unknownCount = Object.values(data.unknown || {}).flat().length;
     const anomalyCount = Object.values(data.byte_anomalies || {}).flat().length;
