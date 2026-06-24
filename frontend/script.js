@@ -48,6 +48,9 @@ async function fetchWithApiFallback(path, options) {
 
       return res;
     } catch (err) {
+      // ถ้าเป็นการ abort โดยตั้งใจ (เช่น user กดยกเลิกดาวน์โหลด) ให้ throw ออกทันที
+      // ห้าม retry candidate URL ตัวถัดไป เพราะนี่ไม่ใช่ network error
+      if (err && err.name === 'AbortError') throw err;
       lastErr = err;
     }
   }
@@ -69,7 +72,9 @@ const DL_STEP_DONE      = 2;
 
 let _dlStartTime   = null;
 let _dlRetryFn      = null;   // เก็บ callback ไว้เผื่อกด "ลองใหม่"
-let _dlCloseLock    = false;  // กัน user ปิด modal ระหว่างกำลังโหลดจริง (ปิดได้แค่ตอน success/error)
+let _dlCloseLock    = false;  // กัน user ปิด modal เฉยๆแบบไม่รู้ผลระหว่างกำลังโหลดจริง
+                               // (ปุ่ม "ยกเลิก" ยังกดได้เสมอ — ดูฟังก์ชัน closeDownloadModal)
+let _dlAbortCtrl    = null;   // AbortController ของ fetch ที่กำลังทำงานอยู่ ณ ขณะนี้ (ถ้ามี)
 
 function formatBytes(bytes) {
   if (bytes == null || isNaN(bytes)) return '';
@@ -83,10 +88,11 @@ function formatElapsed(ms) {
   return `${(ms / 1000).toFixed(1)} วินาที`;
 }
 
-function openDownloadModal(retryFn) {
+function openDownloadModal(retryFn, abortCtrl) {
   _dlStartTime = Date.now();
   _dlRetryFn   = retryFn || null;
   _dlCloseLock = true;
+  _dlAbortCtrl = abortCtrl || null;
 
   const overlay = document.getElementById('dlProgressOverlay');
   if (!overlay) return;
@@ -110,13 +116,22 @@ function openDownloadModal(retryFn) {
 }
 
 function closeDownloadModal() {
-  if (_dlCloseLock) return; // ยังกำลังโหลดอยู่จริง ไม่ให้ปิดเฉยๆแบบไม่รู้ผล
+  if (_dlCloseLock) {
+    // กำลังโหลดอยู่จริง — ปุ่มตรงนี้ทำหน้าที่เป็น "ยกเลิก" ไม่ใช่ "ปิด"
+    // ต้อง abort fetch ที่กำลังวิ่งอยู่จริงๆ ไม่ใช่แค่ซ่อน modal เฉยๆ
+    // (ไม่งั้น download จะรันต่อใน background ทั้งที่ user คิดว่ายกเลิกไปแล้ว)
+    if (_dlAbortCtrl) {
+      _dlAbortCtrl.abort();
+    }
+    _dlCloseLock = false;
+  }
   const overlay = document.getElementById('dlProgressOverlay');
   if (overlay) {
     overlay.classList.remove('visible');
     overlay.setAttribute('aria-hidden', 'true');
   }
-  _dlRetryFn = null;
+  _dlRetryFn   = null;
+  _dlAbortCtrl = null;
 }
 
 function setDownloadStep(stepIndex, status) {
@@ -1315,7 +1330,8 @@ async function downloadTable(key, fmt) {
  */
 async function runBackendDownload({ path, filename }) {
   const attempt = async () => {
-    openDownloadModal(attempt); // ส่งตัวเองเป็น retry callback
+    const abortCtrl = new AbortController();
+    openDownloadModal(attempt, abortCtrl); // ส่งตัวเองเป็น retry callback + controller สำหรับปุ่มยกเลิก
 
     // ── ขั้นตอน 1: ตรวจสอบไฟล์ ──────────────────────────
     // ยิง HEAD ไปที่ endpoint export จริงก่อน เพื่อเช็คว่า session/table
@@ -1328,7 +1344,7 @@ async function runBackendDownload({ path, filename }) {
 
     let knownSize = null;
     try {
-      const headRes = await fetchWithApiFallback(path, { method: 'HEAD' });
+      const headRes = await fetchWithApiFallback(path, { method: 'HEAD', signal: abortCtrl.signal });
       if (!headRes.ok) {
         const errBody = await headRes.json?.().catch(() => ({})) || {};
         throw new Error(errBody.detail || headRes.statusText || 'ไม่พบไฟล์ที่ต้องการดาวน์โหลด');
@@ -1336,6 +1352,7 @@ async function runBackendDownload({ path, filename }) {
       const cl = headRes.headers.get('Content-Length');
       knownSize = cl ? parseInt(cl, 10) : null;
     } catch (err) {
+      if (err.name === 'AbortError') return; // user กดยกเลิกเอง — ไม่ใช่ error ที่ต้องโชว์
       showDownloadError(err.message || 'ตรวจสอบไฟล์ไม่สำเร็จ', DL_STEP_VALIDATE);
       showStatus('convertStatus', 'error', '❌ ' + err.message);
       return;
@@ -1347,7 +1364,7 @@ async function runBackendDownload({ path, filename }) {
 
     setLoading(true);
     try {
-      const res = await fetchBlobWithProgress(path, undefined, (pct, received, total) => {
+      const res = await fetchBlobWithProgress(path, { signal: abortCtrl.signal }, (pct, received, total) => {
         setDownloadProgress(pct, pct === null);
         setDownloadBytes(received, total || knownSize);
       });
@@ -1358,6 +1375,7 @@ async function runBackendDownload({ path, filename }) {
       triggerDownload(res.blob, filename);
       showDownloadSuccess(filename, res.blob.size);
     } catch (err) {
+      if (err.name === 'AbortError') return; // user กดยกเลิกระหว่างกำลังโหลด — ไม่ใช่ error ที่ต้องโชว์
       showDownloadError(err.message, DL_STEP_DOWNLOAD);
       showStatus('convertStatus', 'error', '❌ ' + err.message);
     } finally {
