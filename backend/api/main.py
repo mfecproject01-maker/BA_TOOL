@@ -265,13 +265,14 @@ def _make_export_filename(table_names: list[str], ext: str) -> str:
     return f"{joined}_confluent.{ext}"
 
 
-def _log_export_download(request: Request, session_id: str, table_name: str | None, file_type: str, size: int, table_count: int) -> None:
+def _log_export_download(request: Request, session_id: str, table_name: str | None, file_type: str, size: int, table_count: int, username: str | None = None) -> None:
     """Log export download events for historical auditing."""
     client_ip = request.client.host if request.client else "unknown"
     file_scope = "all tables" if table_name is None else f"table={table_name}"
+    username_text = f" username={username}" if username else ""
     logger.info(
         f"⬇️ Export download: {file_type.upper()} {file_scope} "
-        f"session={session_id} tables={table_count} bytes={size} client={client_ip}"
+        f"session={session_id} tables={table_count} bytes={size} client={client_ip}{username_text}"
     )
 
 
@@ -599,6 +600,7 @@ async def convert(
         "duplicate_tables":   duplicate_tables,
         "parse_errors":       parse_errors_by_file,
         "file_sql_text":      file_sql_text,
+        "username":          username,
         "source_db":          source_db,
         "dest_db":            dest_db,
         "created_at":         datetime.now(),
@@ -805,7 +807,8 @@ def export_all(session_id: str, request: Request, tables: List[str] = Query(defa
         file_name=file_name,
     )
     size = buf.getbuffer().nbytes
-    _log_export_download(request, session_id, None, "xlsx", size, len(selected))
+    username = data.get("username")
+    _log_export_download(request, session_id, None, "xlsx", size, len(selected), username)
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -872,7 +875,8 @@ def export_one(session_id: str, request: Request, table_name: str):
         file_name=file_name,
     )
     size = buf.getbuffer().nbytes
-    _log_export_download(request, session_id, table_name, "xlsx", size, 1)
+    username = data.get("username")
+    _log_export_download(request, session_id, table_name, "xlsx", size, 1, username)
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -912,7 +916,8 @@ def export_all_csv_endpoint(session_id: str, request: Request, tables: List[str]
     
     buf = export_all_csv(selected, byte_anomalies=byte_anomalies)
     size = buf.getbuffer().nbytes
-    _log_export_download(request, session_id, None, "csv", size, len(selected))
+    username = data.get("username")
+    _log_export_download(request, session_id, None, "csv", size, len(selected), username)
     return StreamingResponse(
         buf,
         media_type="text/csv; charset=utf-8-sig",
@@ -952,7 +957,8 @@ def export_one_csv(session_id: str, request: Request, table_name: str):
     anomalies = data.get("byte_anomalies", {}).get(table_name)
     buf = export_table_csv(columns, table_name, anomalies=anomalies)
     size = buf.getbuffer().nbytes
-    _log_export_download(request, session_id, table_name, "csv", size, 1)
+    username = data.get("username")
+    _log_export_download(request, session_id, table_name, "csv", size, 1, username)
     return StreamingResponse(
         buf,
         media_type="text/csv; charset=utf-8-sig",
