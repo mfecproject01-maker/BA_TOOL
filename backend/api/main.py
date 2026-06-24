@@ -538,6 +538,45 @@ def get_issues(session_id: str):
     data = get_cached_data(session_id)
     issues: list[dict] = []
 
+    def _find_table_row(file_name: str, column_name: str) -> dict | None:
+        for cols in (data.get("tables") or {}).values():
+            for c in cols:
+                if c.get("file") == file_name and (c.get("column_name") == column_name or c.get("column") == column_name):
+                    return c
+        return None
+
+    def _unsupported_type_suggestion(src_type: str, row: dict | None) -> str:
+        if row:
+            raw = row.get("raw_type")
+            logical = row.get("logical_type")
+            if raw and logical:
+                return (
+                    f"เพิ่ม mapping สำหรับ '{src_type}' ใน database support matrix หรือเปลี่ยนเป็นชนิดที่รองรับ เช่น "
+                    f"'{raw}' ({logical})"
+                )
+            if raw:
+                return f"เพิ่ม mapping สำหรับ '{src_type}' หรือใช้ชนิดที่รองรับ raw type '{raw}'"
+        return f"เพิ่ม mapping สำหรับ datatype '{src_type}' ใน database support matrix"
+
+    def _fk_suggestion(fk_error: dict, row: dict | None) -> str:
+        ref_table = fk_error.get("ref_table") or fk_error.get("referenced_table") or fk_error.get("table")
+        ref_col = fk_error.get("ref_col") or fk_error.get("ref_column") or fk_error.get("column")
+        if ref_table and ref_col:
+            return f"ตรวจสอบว่าโต๊ะอ้างอิง '{ref_table}' และคอลัมน์ '{ref_col}' มีอยู่จริง และชื่อถูกต้อง"
+        if ref_table:
+            return f"ตรวจสอบว่าโต๊ะอ้างอิง '{ref_table}' มีอยู่จริง และแก้ชื่อให้ถูกต้อง"
+        return "ตรวจสอบ foreign key reference ให้ถูกต้องและมีตารางปลายทางอยู่จริง"
+
+    def _byte_anomaly_suggestion(item: dict) -> str:
+        if item.get("detail"):
+            return f"{item['detail']}"
+        return "ตรวจสอบ mapping raw/logical type และปรับให้ destination รองรับ byte output ให้ถูกต้อง"
+
+    def _parse_error_suggestion(issue_obj: dict) -> str:
+        if issue_obj.get("code") == "UNBALANCED_PARENTHESES":
+            return "ตรวจสอบวงเล็บของ CREATE TABLE และแก้ไข SQL ให้ครบถ้วนก่อน parse ใหม่"
+        return "ตรวจสอบ SQL syntax ในไฟล์นี้และแก้ไขข้อผิดพลาดที่มี"
+
     # 1) parse errors: stored per-file in data['parse_errors'] (filename -> list)
     parse_errors = data.get("parse_errors") or {}
     if isinstance(parse_errors, dict):
@@ -545,6 +584,8 @@ def get_issues(session_id: str):
             for e in errs:
                 issue = dict(e)
                 issue["file"] = filename
+                if issue.get("suggestion") is None:
+                    issue["suggestion"] = _parse_error_suggestion(issue)
                 issues.append(issue)
 
     # 2) unknown / unsupported datatype (collected during processing)
@@ -554,17 +595,9 @@ def get_issues(session_id: str):
             file = ent.get("file")
             col = ent.get("column_name")
             src_type = ent.get("type")
-            # attempt to find line info from data['tables']
-            line = None
-            column_pos = None
-            for tkey, cols in (data.get("tables") or {}).items():
-                for c in cols:
-                    if c.get("file") == file and (c.get("column_name") == col or c.get("column") == col):
-                        line = c.get("line")
-                        column_pos = c.get("column_pos")
-                        break
-                if line:
-                    break
+            row = _find_table_row(file, col)
+            line = row.get("line") if row else None
+            column_pos = row.get("column_pos") if row else None
 
             issues.append({
                 "severity": "error",
@@ -572,7 +605,7 @@ def get_issues(session_id: str):
                 "column": column_pos,
                 "message": f"Unsupported datatype {src_type}",
                 "code": "UNSUPPORTED_DATATYPE",
-                "suggestion": None,
+                "suggestion": _unsupported_type_suggestion(src_type, row),
                 "file": file,
             })
 
@@ -584,11 +617,13 @@ def get_issues(session_id: str):
         # lookup line
         line = None
         column_pos = None
+        row = None
         for tkey, cols in (data.get("tables") or {}).items():
             for c in cols:
                 if c.get("table_original") == table or c.get("column_name") == column or c.get("column") == column:
                     line = c.get("line")
                     column_pos = c.get("column_pos")
+                    row = c
                     break
             if line:
                 break
@@ -598,8 +633,8 @@ def get_issues(session_id: str):
             "column": column_pos,
             "message": fe.get("error") or str(fe),
             "code": "FK_REFERENCE_NOT_FOUND",
-            "suggestion": None,
-            "table": table,
+            "suggestion": _fk_suggestion(fe, row),
+            "file": file if (file := row.get("file") if row else None) else table,
         })
 
     # 4) byte anomalies
@@ -624,7 +659,7 @@ def get_issues(session_id: str):
                 "column": column_pos,
                 "message": a.get("detail") or "Byte anomaly detected",
                 "code": "BYTE_ANOMALY",
-                "suggestion": None,
+                "suggestion": _byte_anomaly_suggestion(a),
                 "file": file,
             })
 

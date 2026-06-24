@@ -534,12 +534,13 @@ function renderIssuesTable(issues) {
     tr.dataset.idx = idx;
     const sev = (it.severity || 'error').toLowerCase();
     if (sev === 'error') err++; else if (sev === 'warning') warn++; else info++;
+    const suggestion = String(it.suggestion || '—');
     tr.innerHTML = `
       <td class="issue-sev-${sev}">${escapeHtml(String(it.severity || ''))}</td>
       <td>${escapeHtml(String(it.file || 'unknown'))}</td>
       <td>${escapeHtml(String(it.line || ''))}</td>
       <td>${escapeHtml(String(it.message || ''))}</td>
-      <td>${escapeHtml(String(it.suggestion || ''))}</td>
+      <td>${escapeHtml(suggestion)}</td>
     `;
     tr.addEventListener('click', () => onIssueRowClick(idx));
     tbody.appendChild(tr);
