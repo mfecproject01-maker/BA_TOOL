@@ -265,6 +265,16 @@ def _make_export_filename(table_names: list[str], ext: str) -> str:
     return f"{joined}_confluent.{ext}"
 
 
+def _log_export_download(request: Request, session_id: str, table_name: str | None, file_type: str, size: int, table_count: int) -> None:
+    """Log export download events for historical auditing."""
+    client_ip = request.client.host if request.client else "unknown"
+    file_scope = "all tables" if table_name is None else f"table={table_name}"
+    logger.info(
+        f"⬇️ Export download: {file_type.upper()} {file_scope} "
+        f"session={session_id} tables={table_count} bytes={size} client={client_ip}"
+    )
+
+
 def _load_mapping(source_db: str | None, dest_db: str | None) -> dict:
     """
     โหลด mapping ตาม db pair จาก DB แบบ real-time
@@ -778,7 +788,7 @@ def export_all_head(session_id: str, tables: List[str] = Query(default=None)):
 
 
 @app.get("/export/{session_id}/xlsx")
-def export_all(session_id: str, tables: List[str] = Query(default=None)):
+def export_all(session_id: str, request: Request, tables: List[str] = Query(default=None)):
     data = get_cached_data(session_id)
     all_tables = data["tables"]
     selected = {k: v for k, v in all_tables.items() if tables is None or k in tables}
@@ -794,12 +804,14 @@ def export_all(session_id: str, tables: List[str] = Query(default=None)):
         dest_db=data.get("dest_db"),
         file_name=file_name,
     )
+    size = buf.getbuffer().nbytes
+    _log_export_download(request, session_id, None, "xlsx", size, len(selected))
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
             "Content-Disposition": f'attachment; filename="{_make_export_filename(list(selected.keys()), "xlsx")}"',
-            "Content-Length": str(buf.getbuffer().nbytes),
+            "Content-Length": str(size),
         },
     )
 
@@ -837,7 +849,7 @@ def export_one_head(session_id: str, table_name: str):
 
 
 @app.get("/export/{session_id}/xlsx/{table_name}")
-def export_one(session_id: str, table_name: str):
+def export_one(session_id: str, request: Request, table_name: str):
     data = get_cached_data(session_id)
     columns = data["tables"].get(table_name)
     if columns is None:
@@ -859,12 +871,14 @@ def export_one(session_id: str, table_name: str):
         dest_db=data.get("dest_db"),
         file_name=file_name,
     )
+    size = buf.getbuffer().nbytes
+    _log_export_download(request, session_id, table_name, "xlsx", size, 1)
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={
             "Content-Disposition": f'attachment; filename="{_make_export_filename([table_name], "xlsx")}"',
-            "Content-Length": str(buf.getbuffer().nbytes),
+            "Content-Length": str(size),
         },
     )
 
@@ -890,19 +904,21 @@ def export_all_csv_head(session_id: str, tables: List[str] = Query(default=None)
 
 
 @app.get("/export/{session_id}/csv")
-def export_all_csv_endpoint(session_id: str, tables: List[str] = Query(default=None)):
+def export_all_csv_endpoint(session_id: str, request: Request, tables: List[str] = Query(default=None)):
     data = get_cached_data(session_id)
     all_tables = data["tables"]
     selected = {k: v for k, v in all_tables.items() if tables is None or k in tables}
     byte_anomalies = {k: v for k, v in data.get("byte_anomalies", {}).items() if k in selected}
     
     buf = export_all_csv(selected, byte_anomalies=byte_anomalies)
+    size = buf.getbuffer().nbytes
+    _log_export_download(request, session_id, None, "csv", size, len(selected))
     return StreamingResponse(
         buf,
         media_type="text/csv; charset=utf-8-sig",
         headers={
             "Content-Disposition": f'attachment; filename="{_make_export_filename(list(selected.keys()), "csv")}"',
-            "Content-Length": str(buf.getbuffer().nbytes),
+            "Content-Length": str(size),
         },
     )
 
@@ -927,7 +943,7 @@ def export_one_csv_head(session_id: str, table_name: str):
 
 
 @app.get("/export/{session_id}/csv/{table_name}")
-def export_one_csv(session_id: str, table_name: str):
+def export_one_csv(session_id: str, request: Request, table_name: str):
     data = get_cached_data(session_id)
     columns = data["tables"].get(table_name)
     if columns is None:
@@ -935,12 +951,14 @@ def export_one_csv(session_id: str, table_name: str):
     
     anomalies = data.get("byte_anomalies", {}).get(table_name)
     buf = export_table_csv(columns, table_name, anomalies=anomalies)
+    size = buf.getbuffer().nbytes
+    _log_export_download(request, session_id, table_name, "csv", size, 1)
     return StreamingResponse(
         buf,
         media_type="text/csv; charset=utf-8-sig",
         headers={
             "Content-Disposition": f'attachment; filename="{_make_export_filename([table_name], "csv")}"',
-            "Content-Length": str(buf.getbuffer().nbytes),
+            "Content-Length": str(size),
         },
     )
 
