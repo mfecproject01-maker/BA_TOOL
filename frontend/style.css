@@ -4258,6 +4258,28 @@ body { padding-bottom: 72px; }
   background: rgba(255,255,255,0.025);
 }
 .logs-counters b { color: var(--text2); }
+
+/* Error Panel */
+.error-panel { border:1px solid var(--border); border-radius:8px; padding:8px; margin:10px 0; background:var(--surface); }
+.error-panel-header { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:8px }
+.error-counts { display:flex; gap:8px; align-items:center }
+.err-count { font-size:0.9em }
+.err-count.err { color: #ef4444 }
+.err-count.warn { color: #f59e0b }
+.err-count.info { color: #0ea5e9 }
+.error-actions .btn { margin-left:6px }
+.error-panel-body { max-height:220px; overflow:auto; border-top:1px dashed var(--border2); padding-top:8px }
+.error-table { width:100%; border-collapse:collapse; font-size:0.9em }
+.error-table thead th { text-align:left; padding:6px; border-bottom:1px solid var(--border) }
+.error-table tbody td { padding:6px; border-bottom:1px dashed var(--border2) }
+.issue-row { cursor:pointer }
+ .issue-row:hover td { background: rgba(0, 148, 255, 0.08); }
+ .issue-sev-err { color:#b91c1c; font-weight:600 }
+ .issue-sev-warn { color:#b45309; font-weight:600 }
+ .issue-sev-info { color:#0369a1; font-weight:600 }
+ .preview-line { display:flex; gap:8px; }
+ .preview-line-num { display:inline-block; width:44px; min-width:44px; text-align:right; color: var(--text3); user-select:none; padding-right:10px; }
+
 .logs-counters .info b { color: #4aa3ff; }
 .logs-counters .success b { color: var(--accent); }
 .logs-counters .warning b { color: var(--warn); }

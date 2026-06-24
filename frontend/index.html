@@ -384,6 +384,28 @@
     </div>
 
     <!-- Tables -->
+    <!-- Error / Issues Panel -->
+    <div class="error-panel" id="errorPanel" aria-hidden="true">
+      <div class="error-panel-header">
+        <div class="error-counts">
+          <span class="err-count err">Errors (<span id="errCount">0</span>)</span>
+          <span class="err-count warn">Warnings (<span id="warnCount">0</span>)</span>
+          <span class="err-count info">Info (<span id="infoCount">0</span>)</span>
+        </div>
+        <div class="error-actions">
+          <button class="btn small" id="jumpToErrorBtn">Jump To Error</button>
+          <button class="btn small" id="prevErrorBtn">Previous Error</button>
+          <button class="btn small" id="nextErrorBtn">Next Error</button>
+        </div>
+      </div>
+      <div class="error-panel-body" id="errorPanelBody">
+        <table class="error-table" id="errorTable">
+          <thead><tr><th>Severity</th><th>File</th><th>Line</th><th>Message</th><th>Suggestion</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
     <div class="tables-grid" id="tablesGrid">
       <div class="empty-state">
         <div class="empty-state-icon">🗄️</div>

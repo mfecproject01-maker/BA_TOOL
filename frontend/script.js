@@ -507,8 +507,129 @@ async function sendSQLToBackend(sqlFiles) {
   } finally {
     setLoading(false);
     onAllDone();
+    // fetch issues for Error Panel when a session exists
+    if (sessionId) {
+      try { fetchAndRenderIssues(sessionId); } catch (e) { /* ignore */ }
+    }
   }
 }
+
+async function fetchAndRenderIssues(session) {
+  if (!session) return;
+  try {
+    const res = await fetchWithApiFallback(`/result/${session}/issues`);
+    if (!res.ok) return;
+    const data = await res.json();
+    _issues = data.issues || [];
+    renderIssuesTable(_issues);
+  } catch (e) {
+    console.warn('Failed to fetch issues', e);
+  }
+}
+
+function renderIssuesTable(issues) {
+  const tbody = document.querySelector('#errorTable tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  let err = 0, warn = 0, info = 0;
+  issues.forEach((it, idx) => {
+    const tr = document.createElement('tr');
+    tr.className = 'issue-row';
+    tr.dataset.idx = idx;
+    const sev = (it.severity || 'error').toLowerCase();
+    if (sev === 'error') err++; else if (sev === 'warning') warn++; else info++;
+    tr.innerHTML = `
+      <td class="issue-sev-${sev}">${escapeHtml(String(it.severity || ''))}</td>
+      <td>${escapeHtml(String(it.file || 'unknown'))}</td>
+      <td>${escapeHtml(String(it.line || ''))}</td>
+      <td>${escapeHtml(String(it.message || ''))}</td>
+      <td>${escapeHtml(String(it.suggestion || ''))}</td>
+    `;
+    tr.addEventListener('click', () => onIssueRowClick(idx));
+    tbody.appendChild(tr);
+  });
+  document.getElementById('errCount').textContent = String(err);
+  document.getElementById('warnCount').textContent = String(warn);
+  document.getElementById('infoCount').textContent = String(info);
+  _currentIssueIndex = issues.length ? 0 : -1;
+}
+
+async function onIssueRowClick(idx) {
+  const it = _issues[idx];
+  if (!it) return;
+  _currentIssueIndex = idx;
+  const file = it.file || Object.keys(currentData)[0] || 'unknown.sql';
+  try {
+    const res = await fetchWithApiFallback(`/result/${sessionId}/file/${encodeURIComponent(file)}`);
+    if (!res.ok) return;
+    const body = await res.json();
+    const lines = body.lines || [];
+    openFilePreviewModal(file, lines, it.line || 1);
+  } catch (e) {
+    console.warn('failed to fetch file lines', e);
+  }
+}
+
+function openFilePreviewModal(filename, lines, highlightLine) {
+  const overlay = document.createElement('div');
+  overlay.className = 'table-modal-overlay';
+  overlay.id = 'filePreviewOverlay';
+  overlay.addEventListener('click', e => { if (e.target === overlay) closeFilePreviewModal(); });
+
+  const contentHtml = `
+    <div class="table-modal" id="filePreviewModal">
+      <div class="table-modal-header">
+        <div class="table-modal-icon">📄</div>
+        <div style="min-width:0;flex:1">
+          <div class="table-modal-title">${escapeHtml(filename)}</div>
+          <div class="table-modal-meta">${lines.length} lines</div>
+        </div>
+        <button class="table-modal-close" onclick="closeFilePreviewModal()">✕</button>
+      </div>
+      <div class="table-modal-body" style="padding:12px 18px;max-height:520px;overflow:auto" id="filePreviewBody">
+        <div style="font-family:var(--mono);font-size:13px;white-space:pre;line-height:1.45;">${lines.map((ln,i)=>{
+          const num = i+1;
+          const txt = escapeHtml(ln || '');
+          if (num === Number(highlightLine)) return `<div data-line="${num}" class="preview-line highlight-line"><span class="preview-line-num">${num}</span> ${txt}</div>`;
+          return `<div data-line="${num}" class="preview-line"><span class="preview-line-num">${num}</span> ${txt}</div>`;
+        }).join('')}</div>
+      </div>
+    </div>`;
+
+  overlay.innerHTML = contentHtml;
+  document.body.appendChild(overlay);
+  document.body.style.overflow = 'hidden';
+  setTimeout(() => {
+    const modal = document.getElementById('filePreviewBody');
+    if (!modal) return;
+    const el = modal.querySelector('.highlight-line');
+    if (el) el.scrollIntoView({ block: 'center' });
+  }, 80);
+}
+
+function closeFilePreviewModal() {
+  const overlay = document.getElementById('filePreviewOverlay');
+  if (overlay) overlay.remove();
+  document.body.style.overflow = '';
+}
+
+function attachIssueNavigation() {
+  document.getElementById('jumpToErrorBtn')?.addEventListener('click', () => {
+    if (_currentIssueIndex >= 0) onIssueRowClick(_currentIssueIndex);
+  });
+  document.getElementById('nextErrorBtn')?.addEventListener('click', () => {
+    if (!_issues.length) return;
+    _currentIssueIndex = Math.min(_issues.length - 1, _currentIssueIndex + 1);
+    if (_currentIssueIndex >= 0) onIssueRowClick(_currentIssueIndex);
+  });
+  document.getElementById('prevErrorBtn')?.addEventListener('click', () => {
+    if (!_issues.length) return;
+    _currentIssueIndex = Math.max(0, _currentIssueIndex - 1);
+    if (_currentIssueIndex >= 0) onIssueRowClick(_currentIssueIndex);
+  });
+}
+
+attachIssueNavigation();
 
 function applyBackendTables(tables, unknown, byteAnomalies = {}, duplicateTables = {}, fkErrors = []) {
   const dupTableNames = new Set(Object.keys(duplicateTables));
@@ -626,6 +747,9 @@ async function syncSessionDiagnostics() {
 
   renderTypePanel();
   renderTables();
+  if (sessionId) {
+    try { fetchAndRenderIssues(sessionId); } catch (e) { /* ignore */ }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════

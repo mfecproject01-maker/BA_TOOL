@@ -495,6 +495,8 @@ def _process_sql_file(
 
             col_entry = {
                 "column_name":     row["column"],
+                    "line":            row.get("line"),
+                    "column_pos":      row.get("column_pos"),
                 "schema":          row.get("schema"),
                 "table_original":  row.get("table_original"),
                 "file":            filename,
@@ -529,6 +531,127 @@ def _process_sql_file(
                 })
 
     return file_parse_errors
+
+
+@app.get("/api/result/{session_id}/issues")
+def get_issues(session_id: str):
+    data = get_cached_data(session_id)
+    issues: list[dict] = []
+
+    # 1) parse errors: stored per-file in data['parse_errors'] (filename -> list)
+    parse_errors = data.get("parse_errors") or {}
+    if isinstance(parse_errors, dict):
+        for filename, errs in parse_errors.items():
+            for e in errs:
+                issue = dict(e)
+                issue["file"] = filename
+                issues.append(issue)
+
+    # 2) unknown / unsupported datatype (collected during processing)
+    unknown_map = data.get("unknown") or {}
+    for table_key, entries in unknown_map.items():
+        for ent in entries:
+            file = ent.get("file")
+            col = ent.get("column_name")
+            src_type = ent.get("type")
+            # attempt to find line info from data['tables']
+            line = None
+            column_pos = None
+            for tkey, cols in (data.get("tables") or {}).items():
+                for c in cols:
+                    if c.get("file") == file and (c.get("column_name") == col or c.get("column") == col):
+                        line = c.get("line")
+                        column_pos = c.get("column_pos")
+                        break
+                if line:
+                    break
+
+            issues.append({
+                "severity": "error",
+                "line": line,
+                "column": column_pos,
+                "message": f"Unsupported datatype {src_type}",
+                "code": "UNSUPPORTED_DATATYPE",
+                "suggestion": None,
+                "file": file,
+            })
+
+    # 3) FK validation errors
+    fk_errors = data.get("fk_errors") or []
+    for fe in fk_errors:
+        table = fe.get("table")
+        column = fe.get("column")
+        # lookup line
+        line = None
+        column_pos = None
+        for tkey, cols in (data.get("tables") or {}).items():
+            for c in cols:
+                if c.get("table_original") == table or c.get("column_name") == column or c.get("column") == column:
+                    line = c.get("line")
+                    column_pos = c.get("column_pos")
+                    break
+            if line:
+                break
+        issues.append({
+            "severity": "error",
+            "line": line,
+            "column": column_pos,
+            "message": fe.get("error") or str(fe),
+            "code": "FK_REFERENCE_NOT_FOUND",
+            "suggestion": None,
+            "table": table,
+        })
+
+    # 4) byte anomalies
+    anomalies = data.get("byte_anomalies") or {}
+    for table_key, items in anomalies.items():
+        for a in items:
+            file = a.get("file")
+            col = a.get("column_name")
+            line = None
+            column_pos = None
+            for tkey, cols in (data.get("tables") or {}).items():
+                for c in cols:
+                    if c.get("file") == file and (c.get("column_name") == col or c.get("column") == col):
+                        line = c.get("line")
+                        column_pos = c.get("column_pos")
+                        break
+                if line:
+                    break
+            issues.append({
+                "severity": "warning",
+                "line": line,
+                "column": column_pos,
+                "message": a.get("detail") or "Byte anomaly detected",
+                "code": "BYTE_ANOMALY",
+                "suggestion": None,
+                "file": file,
+            })
+
+    return {"issues": issues}
+
+
+@app.get("/api/result/{session_id}/file/{filename}")
+def get_session_file(session_id: str, filename: str):
+    """Return the raw SQL text for a given file in the session as lines.
+    Frontend uses this to show source preview and highlight problem lines.
+    """
+    data = get_cached_data(session_id)
+    files = data.get("file_sql_text") or {}
+    content = files.get(filename)
+    if content is None:
+        # try fallback: filename may be stored without path
+        for k in files.keys():
+            if k.endswith(filename):
+                content = files[k]
+                filename = k
+                break
+    if content is None:
+        raise HTTPException(404, "File not found in session")
+
+    # return lines to avoid large single-string rendering on client
+    lines = content.splitlines()
+    return {"file": filename, "lines": lines}
 
 
 @app.post("/convert")

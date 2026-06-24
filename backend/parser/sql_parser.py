@@ -336,7 +336,7 @@ def parse_sql_with_errors(sql_text: str) -> tuple[list[dict], list[dict]]:
     parse_errors: list[dict] = []
     sql_text = _strip_sql_comments(sql_text)
 
-    for table_name, body, is_truncated in _iter_create_table_blocks(sql_text):
+    for table_name, body, is_truncated, table_start in _iter_create_table_blocks(sql_text):
         name_parts = _identifier_parts(table_name)
         schema_name = _unquote_identifier(name_parts[-2]) if len(name_parts) > 1 else None
         table_original = _unquote_identifier(name_parts[-1]) if name_parts else _unquote_identifier(table_name)
@@ -347,14 +347,18 @@ def parse_sql_with_errors(sql_text: str) -> tuple[list[dict], list[dict]]:
                 "CREATE TABLE มีวงเล็บไม่ปิดครบ: table=%r schema=%r",
                 clean_table_name, schema_name,
             )
+            # compute line/column from table_start
+            line_no = sql_text.count("\n", 0, table_start) + 1
             parse_errors.append({
-                "table": clean_table_name,
-                "schema": schema_name,
-                "error": "UNBALANCED_PARENTHESES",
+                "severity": "error",
+                "line": line_no,
+                "column": 1,
                 "message": (
                     f"ตาราง '{clean_table_name}' วงเล็บของ CREATE TABLE ไม่ปิดให้ครบ "
                     f"(ไฟล์อาจถูกตัดตอนหรือ export มาไม่สมบูรณ์) — กรุณาแก้ไข SQL แล้ว parse ใหม่"
                 ),
+                "code": "UNBALANCED_PARENTHESES",
+                "suggestion": None,
             })
             continue  # ไม่ parse column ของ table ที่วงเล็บไม่ครบ
 
@@ -366,6 +370,8 @@ def parse_sql_with_errors(sql_text: str) -> tuple[list[dict], list[dict]]:
             clean_table_name,
         )
         lines = _split_columns(body)
+        # track position within body for line offsets
+        body_search_pos = 0
 
         # ── Pass 1: scan table-level PK / FK constraints ──────
         pk_cols: set[str] = set()
@@ -457,11 +463,24 @@ def parse_sql_with_errors(sql_text: str) -> tuple[list[dict], list[dict]]:
                 ref_col = ref_cols[0] if ref_cols else None
                 fk_map[column_name] = {"ref_table": ref_table, "ref_column": ref_col}
 
+            # determine line/column within original sql_text for this column definition
+            rel_offset = body.find(line, body_search_pos)
+            if rel_offset == -1:
+                rel_offset = body_search_pos
+            abs_index = table_start + rel_offset
+            col_line_no = sql_text.count("\n", 0, abs_index) + 1
+            # column position = chars after last newline
+            last_nl = sql_text.rfind("\n", 0, abs_index)
+            col_column = abs_index - (last_nl + 1) if last_nl != -1 else abs_index + 1
+            body_search_pos = rel_offset + len(line)
+
             tables.append({
                 "table": clean_table_name,
                 "schema":   schema_name,
                 "table_original": table_original,
                 "column":   column_name,
+                "line":     col_line_no,
+                "column_pos": col_column,
                 "type":     sql_type,
                 "nullable": nullable,
                 "is_pk":    column_name in pk_cols,
@@ -604,17 +623,17 @@ def _iter_create_table_blocks(sql_text: str):
             elif ch == ")":
                 depth -= 1
                 if depth == 0:
-                    yield table_name, sql_text[open_idx + 1:idx], False
+                    yield table_name, sql_text[open_idx + 1:idx], False, open_idx + 1
                     closed = True
                     break
             idx += 1
 
         if not closed and idx >= len(sql_text):
             # เจอ EOF ก่อนวงเล็บปิดครบ — body คือทั้งหมดที่เหลือ
-            yield table_name, sql_text[open_idx + 1:idx], True
+            yield table_name, sql_text[open_idx + 1:idx], True, open_idx + 1
         elif not closed:
             # ตัดจบเพราะเจอ CREATE ตัวใหม่ทั้งที่ depth ยังไม่ครบ
-            yield table_name, sql_text[open_idx + 1:idx], True
+            yield table_name, sql_text[open_idx + 1:idx], True, open_idx + 1
 
 
 def validate_fk(tables: dict[str, list[dict]]) -> list:
