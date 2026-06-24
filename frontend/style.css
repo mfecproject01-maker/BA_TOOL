@@ -4275,6 +4275,7 @@ body { padding-bottom: 72px; }
 .error-table tbody td { padding:6px; border-bottom:1px dashed var(--border2) }
 .issue-row { cursor:pointer }
  .issue-row:hover td { background: rgba(0, 148, 255, 0.08); }
+ .issue-row.selected td { background: rgba(0, 148, 255, 0.18); }
  .issue-sev-err { color:#b91c1c; font-weight:600 }
  .issue-sev-warn { color:#b45309; font-weight:600 }
  .issue-sev-info { color:#0369a1; font-weight:600 }
@@ -4282,8 +4283,7 @@ body { padding-bottom: 72px; }
  .preview-line-num { display:inline-flex; justify-content:flex-end; width:56px; min-width:56px; color: var(--text3); user-select:none; padding-right:10px; }
  .preview-line-text { white-space: pre; display:block; overflow-wrap:anywhere; }
  .preview-caret { grid-column: 2; color: var(--danger); font-family: var(--mono); font-size: 0.95em; margin-left: 0; }
- .highlight-line { background: rgba(248,113,113,0.14); border-radius: 8px; border: 1px solid rgba(248,113,113,0.22); padding: 6px; }
-
+ .file-preview-suggestion { margin-top: 8px; padding: 10px 12px; border-radius: 10px; background: rgba(14,165,233,0.08); border: 1px solid rgba(14,165,233,0.18); color: var(--text); font-size: 0.88em; }
 .logs-counters .info b { color: #4aa3ff; }
 .logs-counters .success b { color: var(--accent); }
 .logs-counters .warning b { color: var(--warn); }

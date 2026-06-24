@@ -35,7 +35,7 @@ from backend.exporter.excel_exporter import export_confluent_xlsx, export_table_
 # /health checks this flag so it can return 503 during cold-start init.
 _startup_complete: bool = False
 _startup_error: str | None = None
-_startup_time: str | None = None   # ISO-8601 UTC
+_startup_time: str | None = None   # Local machine time
 
 # ── Constants ────────────────────────────────────────────
 MAX_FILE_SIZE_MB = 10
@@ -112,7 +112,7 @@ async def lifespan(app: FastAPI):
         raise
 
     _startup_complete = True
-    _startup_time = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    _startup_time = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
     logger.info("[HEALTH] 🚀 [2/2] Startup Complete: Server is ready to accept connections.")
 
     _cleanup_task = asyncio.create_task(_session_cleanup_loop())
@@ -335,7 +335,7 @@ def health():
     """
     from backend.config.db import get_connection, release_connection, get_db_names
 
-    timestamp = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+    timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
 
     # ── Guard: startup ยังไม่เสร็จ ────────────────────────────────────────
     if not _startup_complete:
@@ -662,6 +662,18 @@ def get_issues(session_id: str):
                 "suggestion": _byte_anomaly_suggestion(a),
                 "file": file,
             })
+
+    for issue in issues:
+        if not issue.get("suggestion"):
+            issue["suggestion"] = _parse_error_suggestion(issue)
+
+    severity_rank = {"error": 0, "warning": 1, "info": 2}
+    issues.sort(key=lambda issue: (
+        severity_rank.get(str(issue.get("severity", "")).lower(), 3),
+        str(issue.get("file", "")).lower(),
+        issue.get("line") or 0,
+        issue.get("column") or 0,
+    ))
 
     return {"issues": issues}
 

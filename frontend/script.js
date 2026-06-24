@@ -528,9 +528,14 @@ function renderIssuesTable(issues) {
   if (!tbody) return;
   tbody.innerHTML = '';
   let err = 0, warn = 0, info = 0;
+  if (_currentIssueIndex < 0 || _currentIssueIndex >= issues.length) {
+    _currentIssueIndex = issues.length ? 0 : -1;
+  }
+
   issues.forEach((it, idx) => {
     const tr = document.createElement('tr');
     tr.className = 'issue-row';
+    if (idx === _currentIssueIndex) tr.classList.add('selected');
     tr.dataset.idx = idx;
     const sev = (it.severity || 'error').toLowerCase();
     if (sev === 'error') err++; else if (sev === 'warning') warn++; else info++;
@@ -550,26 +555,34 @@ function renderIssuesTable(issues) {
   document.getElementById('infoCount').textContent = String(info);
   const panel = document.getElementById('errorPanel');
   if (panel) panel.setAttribute('aria-hidden', issues.length ? 'false' : 'true');
-  _currentIssueIndex = issues.length ? 0 : -1;
+  updateIssueNavigationButtons();
 }
 
 async function onIssueRowClick(idx) {
   const it = _issues[idx];
   if (!it) return;
   _currentIssueIndex = idx;
+  highlightCurrentIssueRow();
   const file = it.file || Object.keys(currentData)[0] || 'unknown.sql';
   try {
     const res = await fetchWithApiFallback(`/api/result/${sessionId}/file/${encodeURIComponent(file)}`);
     if (!res.ok) return;
     const body = await res.json();
     const lines = body.lines || [];
-    openFilePreviewModal(file, lines, it.line || 1, it.column || it.column_pos || null, it.message || '');
+    openFilePreviewModal(
+      file,
+      lines,
+      it.line || 1,
+      it.column || it.column_pos || null,
+      it.message || '',
+      it.suggestion || ''
+    );
   } catch (e) {
     console.warn('failed to fetch file lines', e);
   }
 }
 
-function openFilePreviewModal(filename, lines, highlightLine, highlightColumn, message) {
+function openFilePreviewModal(filename, lines, highlightLine, highlightColumn, message, suggestion) {
   const overlay = document.createElement('div');
   overlay.className = 'table-modal-overlay';
   overlay.id = 'filePreviewOverlay';
@@ -583,6 +596,7 @@ function openFilePreviewModal(filename, lines, highlightLine, highlightColumn, m
           <div class="table-modal-title">${escapeHtml(filename)}</div>
           <div class="table-modal-meta">${lines.length} lines ${highlightLine ? `· highlight line ${highlightLine}` : ''}</div>
           ${highlightLine ? `<div class="file-preview-warning">${escapeHtml(message)}</div>` : ''}
+          ${suggestion ? `<div class="file-preview-suggestion">Suggestion: ${escapeHtml(suggestion)}</div>` : ''}
         </div>
         <button class="table-modal-close" onclick="closeFilePreviewModal()">✕</button>
       </div>
@@ -633,6 +647,22 @@ function attachIssueNavigation() {
     _currentIssueIndex = Math.max(0, _currentIssueIndex - 1);
     if (_currentIssueIndex >= 0) onIssueRowClick(_currentIssueIndex);
   });
+}
+
+function updateIssueNavigationButtons() {
+  const prev = document.getElementById('prevErrorBtn');
+  const next = document.getElementById('nextErrorBtn');
+  const jump = document.getElementById('jumpToErrorBtn');
+  if (prev) prev.disabled = _currentIssueIndex <= 0;
+  if (next) next.disabled = _currentIssueIndex < 0 || _currentIssueIndex >= _issues.length - 1;
+  if (jump) jump.disabled = _currentIssueIndex < 0;
+}
+
+function highlightCurrentIssueRow() {
+  document.querySelectorAll('#errorTable tbody tr').forEach((tr, index) => {
+    tr.classList.toggle('selected', index === _currentIssueIndex);
+  });
+  updateIssueNavigationButtons();
 }
 
 attachIssueNavigation();
@@ -1028,56 +1058,6 @@ function buildTypeFlowHTML(backendCols) {
   }).join('');
 }
 
-function renderUnknownWarnings(unknown) {
-  document.getElementById('unknownWarnings')?.remove();
-  const items = Object.entries(unknown).flatMap(([tbl, cols]) =>
-    cols.map(c => `<li><b>${tbl}</b>.<span>${c.column_name}</span> — ${c.reason||'ไม่รู้จัก type'}</li>`)
-  );
-  if (!items.length) return;
-  const div = document.createElement('div');
-  div.id        = 'unknownWarnings';
-  div.className = 'warn-panel';
-  div.innerHTML = `
-    <div class="warn-panel-header">
-      ⚠️ Unknown Types (${items.length})
-      <button onclick="this.parentElement.parentElement.remove()">✕</button>
-    </div>
-    <ul>${items.join('')}</ul>`;
-  document.getElementById('tablesGrid').insertAdjacentElement('beforebegin', div);
-}
-
-function renderByteAnomalyWarnings(byteAnomalies) {
-  document.getElementById('byteAnomalyWarnings')?.remove();
-  const items = Object.entries(byteAnomalies).flatMap(([tbl, cols]) =>
-    cols
-      .filter(c => c && typeof c === 'object')
-      .map(c => `
-      <li>
-        <div class="anomaly-row">
-          <span class="anomaly-loc"><b>${tbl}</b>.<code>${c.column_name}</code></span>
-          <span class="anomaly-tag">source: <em>${c.source_type}</em> → raw: <em>${c.raw_type}</em></span>
-        </div>
-        <div class="anomaly-detail">${c.detail || ''}</div>
-        <div class="anomaly-file">📄 ${c.file || ''}</div>
-      </li>`)
-  );
-  if (!items.length) return;
-
-  const div = document.createElement('div');
-  div.id        = 'byteAnomalyWarnings';
-  div.className = 'warn-panel byte-anomaly-panel';
-  div.innerHTML = `
-    <div class="warn-panel-header byte-anomaly-header">
-      <span>🔴 ตรวจพบข้อมูลไม่ปกติ — Byte Conversion Anomaly (${items.length} คอลัมน์)</span>
-      <div class="anomaly-actions">
-        <span class="anomaly-hint">คอลัมน์เหล่านี้ถูกแปลงเป็น byte แต่ type ต้นทางไม่ใช่ decimal — กรุณาตรวจสอบ mapping</span>
-        <button onclick="this.closest('#byteAnomalyWarnings').remove()">✕</button>
-      </div>
-    </div>
-    <ul>${items.join('')}</ul>`;
-  document.getElementById('tablesGrid').insertAdjacentElement('beforebegin', div);
-}
-
 function renderContentDupWarnings(warnings) {
   document.getElementById('contentDupWarnings')?.remove();
   const items = warnings.map(w => `
@@ -1104,44 +1084,6 @@ function renderContentDupWarnings(warnings) {
 //  PARSE ERROR WARNINGS — วงเล็บ CREATE TABLE ไม่ปิดครบ
 // ═══════════════════════════════════════════════════════════
 //  parseErrors: { [filename]: [{ table, schema, error, message }, ...] }
-function renderParseErrorWarnings(parseErrors) {
-  document.getElementById('parseErrorWarnings')?.remove();
-  const entries = Object.entries(parseErrors || {});
-  const items = entries.flatMap(([filename, errs]) =>
-    (errs || []).map(err => {
-      const loc = err.schema ? `${escapeHtml(err.schema)}.${escapeHtml(err.table)}` : escapeHtml(err.table);
-      return `
-      <li>
-        <div class="anomaly-row">
-          <span class="anomaly-loc"><b>${loc}</b></span>
-          <span class="anomaly-tag">📄 ${escapeHtml(filename)}</span>
-        </div>
-        <div class="anomaly-detail">${escapeHtml(err.message || 'วงเล็บของ CREATE TABLE ไม่ปิดให้ครบ')}</div>
-        <div class="parse-error-actions">
-          <button class="btn-fix-sql" onclick="openSqlEditModal('${escapeHtmlAttr(filename)}','${escapeHtmlAttr(err.table)}')">✏️ เปิดแก้ไข</button>
-          <button class="btn-cancel-sql" onclick="dismissParseError('${escapeHtmlAttr(filename)}','${escapeHtmlAttr(err.table)}')">✕ ยกเลิก</button>
-        </div>
-      </li>`;
-    })
-  );
-  if (!items.length) return;
-
-  const div = document.createElement('div');
-  div.id        = 'parseErrorWarnings';
-  div.className = 'warn-panel byte-anomaly-panel';
-  div.innerHTML = `
-    <div class="warn-panel-header byte-anomaly-header">
-      <span>🔴 วงเล็บ CREATE TABLE ไม่ปิดครบ (${items.length} ตาราง)</span>
-      <div class="anomaly-actions">
-        <span class="anomaly-hint">ตารางเหล่านี้ไม่ถูกนำเข้าเพราะ SQL ไม่สมบูรณ์ — กดเปิดแก้ไขเพื่อพิมพ์แก้แล้ว parse ใหม่ หรือยกเลิกเพื่อข้ามตารางนี้ไป</span>
-        <button onclick="this.closest('#parseErrorWarnings').remove()">✕</button>
-      </div>
-    </div>
-    <ul>${items.join('')}</ul>`;
-  document.getElementById('tablesGrid').insertAdjacentElement('beforebegin', div);
-}
-
-function dismissParseError(filename, tableName) {
   // ผู้ใช้เลือก "ยกเลิก" — ไม่ต้องเรียก backend อะไรเพิ่ม table นี้ก็ถูก
   // ข้ามอยู่แล้วตั้งแต่ /convert (ไม่เคยถูกเพิ่มเข้า currentData) แค่ลบ
   // รายการคำเตือนนี้ออกจาก UI พอ
@@ -1151,7 +1093,7 @@ function dismissParseError(filename, tableName) {
   }
   renderParseErrorWarnings(lastParseErrors);
   showStatus('uploadStatus', 'info', `ข้ามตาราง '${tableName}' แล้ว (ไม่ถูกนำเข้า)`);
-}
+
 
 // เก็บ parse_errors ล่าสุดไว้ใช้ตอนกด "ยกเลิก" บางรายการ (ไม่ลบทั้ง panel)
 let lastParseErrors = {};
@@ -2235,7 +2177,7 @@ function normalizeLogLevel(log) {
 }
 
 function normalizeLog(log) {
-  const timestamp = String(log.timestamp || '').trim() || new Date().toISOString().slice(0, 19).replace('T', ' ');
+  const timestamp = String(log.timestamp || '').trim() || new Date().toLocaleString(undefined, { hour12: false });
   const message = String(log.message || '').trim();
   const level = normalizeLogLevel(log);
   return { timestamp, level, message };
@@ -2393,7 +2335,7 @@ function downloadProcessingLogs() {
   const body = _logEntries.length
     ? _logEntries.map(formatLogLine).join('\n')
     : 'No logs captured.';
-  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const stamp = new Date().toLocaleString(undefined, { hour12: false }).replace(/[\/:,\s]/g, '-');
   triggerDownload(new Blob([body], { type: 'text/plain;charset=utf-8' }), `processing_logs_${stamp}.txt`);
 }
 
@@ -2756,34 +2698,6 @@ function formatFkRef(fk) {
   return `${fk.ref_table || '?'}${fk.ref_column ? '.' + fk.ref_column : ''}`;
 }
 
-function renderFKErrors(fkErrors) {
-  document.getElementById('fkErrorPanel')?.remove();
-  if (!fkErrors || !fkErrors.length) return;
-
-  const items = fkErrors.map(e => {
-    // backend returns: { table, column, ref_table, ref_col, error }
-    const src  = e.src  || `${e.table}.${e.column}`;
-    const msg  = e.msg  || e.error || 'FK validation error';
-    const icon = '❌';
-    return `<li class="fk-err-item error">
-      <span class="fk-err-icon">${icon}</span>
-      <span><b>${escapeHtml(src)}</b> — ${escapeHtml(msg)}</span>
-    </li>`;
-  });
-
-  const div = document.createElement('div');
-  div.id        = 'fkErrorPanel';
-  div.className = 'warn-panel fk-panel';
-  div.innerHTML = `
-    <div class="warn-panel-header">
-      🔗 FK Validation (${fkErrors.length} รายการ)
-      <button onclick="this.parentElement.parentElement.remove()">✕</button>
-    </div>
-    <ul style="list-style:none;display:flex;flex-direction:column;gap:4px">
-      ${items.join('')}
-    </ul>`;
-  document.getElementById('tablesGrid').insertAdjacentElement('beforebegin', div);
-}
 
 // [FIX] beforeunload — wrap ด้วย try-catch ป้องกัน error ใน console
 // เมื่อ API_BASE เป็น localhost แต่ user เปิดจาก Vercel
