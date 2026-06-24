@@ -511,6 +511,9 @@ async function sendSQLToBackend(sqlFiles) {
   }
 }
 
+let _issues = [];
+let _currentIssueIndex = -1;
+
 async function fetchAndRenderIssues(session) {
   if (!session) return;
   try {
