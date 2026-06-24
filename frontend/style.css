@@ -4282,6 +4282,8 @@ body { padding-bottom: 72px; }
  .preview-line { display:grid; grid-template-columns:56px minmax(0,1fr); gap:4px; padding:4px 0; }
  .preview-line-num { display:inline-flex; justify-content:flex-end; width:56px; min-width:56px; color: var(--text3); user-select:none; padding-right:10px; }
  .preview-line-text { white-space: pre; display:block; overflow-wrap:anywhere; }
+ .preview-line.highlight-line { background: rgba(239, 68, 68, 0.12); border-left: 3px solid var(--danger); border-radius: 4px; margin-left: -3px; }
+ .preview-line.highlight-line .preview-line-num { color: var(--danger); font-weight: 600; }
  .preview-caret { grid-column: 2; color: var(--danger); font-family: var(--mono); font-size: 0.95em; margin-left: 0; }
  .file-preview-suggestion { margin-top: 8px; padding: 10px 12px; border-radius: 10px; background: rgba(14,165,233,0.08); border: 1px solid rgba(14,165,233,0.18); color: var(--text); font-size: 0.88em; }
 .logs-counters .info b { color: #4aa3ff; }
