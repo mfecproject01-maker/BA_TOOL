@@ -1083,20 +1083,49 @@ function renderContentDupWarnings(warnings) {
 // ═══════════════════════════════════════════════════════════
 //  PARSE ERROR WARNINGS — วงเล็บ CREATE TABLE ไม่ปิดครบ
 // ═══════════════════════════════════════════════════════════
-//  parseErrors: { [filename]: [{ table, schema, error, message }, ...] }
-  // ผู้ใช้เลือก "ยกเลิก" — ไม่ต้องเรียก backend อะไรเพิ่ม table นี้ก็ถูก
-  // ข้ามอยู่แล้วตั้งแต่ /convert (ไม่เคยถูกเพิ่มเข้า currentData) แค่ลบ
-  // รายการคำเตือนนี้ออกจาก UI พอ
-  if (lastParseErrors[filename]) {
-    lastParseErrors[filename] = lastParseErrors[filename].filter(e => e.table !== tableName);
-    if (!lastParseErrors[filename].length) delete lastParseErrors[filename];
-  }
+// parseErrors: { [filename]: [{ table, schema, error, message }, ...] }
+let lastParseErrors = {};
+
+function removeParseErrorEntry(filename, tableName) {
+  if (!filename || !tableName || !lastParseErrors[filename]) return;
+  lastParseErrors[filename] = lastParseErrors[filename].filter(e => e.table !== tableName);
+  if (!lastParseErrors[filename].length) delete lastParseErrors[filename];
   renderParseErrorWarnings(lastParseErrors);
   showStatus('uploadStatus', 'info', `ข้ามตาราง '${tableName}' แล้ว (ไม่ถูกนำเข้า)`);
+}
 
+function renderParseErrorWarnings(parseErrors) {
+  document.getElementById('parseErrorWarnings')?.remove();
 
-// เก็บ parse_errors ล่าสุดไว้ใช้ตอนกด "ยกเลิก" บางรายการ (ไม่ลบทั้ง panel)
-let lastParseErrors = {};
+  const entries = Object.entries(parseErrors || {}).flatMap(([filename, errors]) =>
+    (errors || []).map(err => `
+      <li>
+        <div class="anomaly-row">
+          <span class="anomaly-loc"><b>${escapeHtml(filename)}</b></span>
+          <span class="anomaly-tag">🔴 ${escapeHtml(err.message || err.error || 'Parse error')}</span>
+        </div>
+        <div class="anomaly-detail">
+          ${err.table ? `<div>Table: <strong>${escapeHtml(err.table)}</strong></div>` : ''}
+          ${err.schema ? `<div>Schema: ${escapeHtml(err.schema)}</div>` : ''}
+          ${err.error ? `<div>${escapeHtml(err.error)}</div>` : ''}
+        </div>
+      </li>`)
+  );
+
+  if (!entries.length) return;
+
+  const div = document.createElement('div');
+  div.id = 'parseErrorWarnings';
+  div.className = 'warn-panel';
+  div.innerHTML = `
+    <div class="warn-panel-header">
+      🔴 พบ parse error (${entries.length}) — ตรวจ SQL ที่อัปโหลดอีกครั้ง
+      <button onclick="this.parentElement.parentElement.remove()">✕</button>
+    </div>
+    <ul>${entries.join('')}</ul>`;
+
+  document.getElementById('tablesGrid')?.insertAdjacentElement('beforebegin', div);
+}
 
 function openSqlEditModal(filename, tableName) {
   const entry = uploadedFiles.find(f => f.name === filename);
