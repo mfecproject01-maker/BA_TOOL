@@ -1,4 +1,4 @@
-CREATE TABLE hrEmployee_Personal (
+CREATE TABLE hrEmployee (
     EmployeeID varchar(36) COLLATE Thai_CI_AS NOT NULL,
     EmployeeCode nvarchar(50) COLLATE Thai_CI_AS NOT NULL 
     NationalID nvarchar(30) COLLATE Thai_CI_AS NULL,
@@ -51,7 +51,7 @@ CREATE TABLE hrEmployee_Personal (
     CurrentPostalCode nvarchar(10) COLLATE Thai_CI_AS NULL, 
     
     PRIMARY KEY (EmployeeID)
-); 
+
 
 CREATE TABLE hrEmployee_Work (
     EmployeeID varchar(36) COLLATE Thai_CI_AS NOT NULL,

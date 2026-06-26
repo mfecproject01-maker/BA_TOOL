@@ -23,38 +23,178 @@ function resolveApiBase() {
 
 let API_BASE = resolveApiBase();
 
-async function fetchWithApiFallback(path, options) {
+// ─── API History (frontend session) ──────────────────────────
+// เก็บ history ใน session ปัจจุบัน (ล้างเมื่อ refresh หน้า)
+const _apiHistory = [];
+const API_HISTORY_LIMIT = 200;
+
+function _pushApiHistory(entry) {
+  _apiHistory.unshift(entry);
+  if (_apiHistory.length > API_HISTORY_LIMIT) _apiHistory.pop();
+}
+
+function _classifyError(status, errName) {
+  if (errName === 'AbortError') return 'ABORTED';
+  if (errName === 'TypeError' || errName === 'NetworkError') return 'NETWORK_ERROR';
+  if (!status) return 'NETWORK_ERROR';
+  if (status === 400) return 'BAD_REQUEST';
+  if (status === 401) return 'UNAUTHORIZED';
+  if (status === 403) return 'FORBIDDEN';
+  if (status === 404) return 'NOT_FOUND';
+  if (status === 422) return 'VALIDATION_ERROR';
+  if (status === 429) return 'RATE_LIMITED';
+  if (status === 503) return 'SERVICE_UNAVAILABLE';
+  if (status >= 500) return 'SERVER_ERROR';
+  return 'UNKNOWN_ERROR';
+}
+
+function _friendlyErrorMessage(errorType, detail) {
+  const map = {
+    NETWORK_ERROR:      'ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ได้ กรุณาตรวจสอบการเชื่อมต่อ',
+    TIMEOUT:            'การเชื่อมต่อใช้เวลานานเกินไป กรุณาลองใหม่อีกครั้ง',
+    BAD_REQUEST:        `ข้อมูลที่ส่งไม่ถูกต้อง: ${detail || ''}`,
+    NOT_FOUND:          'ไม่พบข้อมูลที่ร้องขอ (Session อาจหมดอายุ)',
+    RATE_LIMITED:       'มีการเรียกใช้งานบ่อยเกินไป กรุณารอสักครู่แล้วลองใหม่',
+    SERVICE_UNAVAILABLE:'ระบบไม่พร้อมให้บริการชั่วคราว กรุณาลองใหม่ภายหลัง',
+    SERVER_ERROR:       'เกิดข้อผิดพลาดภายในเซิร์ฟเวอร์ ทีมงานได้รับแจ้งแล้ว',
+    VALIDATION_ERROR:   'รูปแบบข้อมูลไม่ถูกต้อง กรุณาตรวจสอบข้อมูลที่ป้อน',
+    ABORTED:            'การเรียกถูกยกเลิก',
+  };
+  return map[errorType] || detail || 'เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ';
+}
+
+function _suggestSolution(errorType, endpoint) {
+  const map = {
+    NETWORK_ERROR:      'ตรวจสอบการเชื่อมต่ออินเทอร์เน็ต หรือรอให้เซิร์ฟเวอร์กลับมาออนไลน์',
+    TIMEOUT:            'ลองอัปโหลดไฟล์ขนาดเล็กกว่า หรือรอให้ระบบว่างแล้วลองใหม่',
+    RATE_LIMITED:       'รอประมาณ 1 นาทีแล้วลองใหม่',
+    SERVICE_UNAVAILABLE:'ระบบอยู่ในโหมดซ่อมบำรุง กรุณาลองใหม่ภายหลัง',
+    SERVER_ERROR:       'ลองใหม่อีกครั้ง หากปัญหายังคงอยู่โปรดแจ้งผู้ดูแลระบบพร้อม Request ID',
+    NOT_FOUND:          'อัปโหลดไฟล์ใหม่เพื่อสร้าง session ใหม่',
+  };
+  return map[errorType] || 'ลองใหม่อีกครั้ง หรือติดต่อผู้ดูแลระบบ';
+}
+
+// ── Last error info (สำหรับปุ่ม "ดูรายละเอียด") ─────────────
+let _lastErrorDetail = null;
+
+async function fetchWithApiFallback(path, options, _retryCount = 0) {
   const candidates = [API_BASE];
   if (API_BASE === 'http://localhost:8000') candidates.push('http://127.0.0.1:8000');
   if (API_BASE === 'http://127.0.0.1:8000') candidates.push('http://localhost:8000');
 
   let lastErr = null;
+  const t0 = performance.now();
+
   for (const base of [...new Set(candidates)]) {
     try {
       const res = await fetch(`${base}${path}`, options);
       API_BASE = base;
+
+      const elapsed = performance.now() - t0;
+      const requestId = res.headers.get('X-Request-ID') || null;
 
       // Detect session-not-found responses and surface a premium overlay
       if (res.status === 404) {
         try {
           const body = await res.clone().json().catch(() => ({}));
           const msg = (body && (body.detail || body.message || body.error)) || '';
-          if (/session not found|session.*not found|session.*expired/i.test(msg) || /session not found/i.test(msg)) {
-            // show overlay but continue returning response so existing callers can handle it
+          if (/session not found|session.*not found|session.*expired/i.test(msg)) {
             try { showSessionExpiredOverlay(); } catch (e) { /* ignore */ }
           }
         } catch (e) {}
       }
 
+      // บันทึก API history
+      const isError = res.status >= 400;
+      const errorType = isError ? _classifyError(res.status, null) : null;
+      _pushApiHistory({
+        request_id:      requestId,
+        timestamp:       new Date().toLocaleString('th-TH', { hour12: false }),
+        endpoint:        path,
+        method:          (options?.method || 'GET').toUpperCase(),
+        status:          res.status,
+        response_time_ms: Math.round(elapsed),
+        error_type:      errorType,
+        retry_count:     _retryCount,
+      });
+
+      // บันทึก error detail สำหรับปุ่ม "ดูรายละเอียด"
+      if (isError) {
+        const cloned = res.clone();
+        const errBody = await cloned.json().catch(() => ({}));
+        const detail = errBody.detail || errBody.message || res.statusText;
+        _lastErrorDetail = {
+          request_id:      requestId,
+          endpoint:        path,
+          method:          (options?.method || 'GET').toUpperCase(),
+          status:          res.status,
+          response_time_ms: Math.round(elapsed),
+          error_type:      errorType,
+          error_summary:   detail,
+          friendly_message: _friendlyErrorMessage(errorType, detail),
+          suggested_solution: _suggestSolution(errorType, path),
+          timestamp:       new Date().toLocaleString('th-TH', { hour12: false }),
+          retry_count:     _retryCount,
+        };
+      } else {
+        // reset เมื่อสำเร็จ
+        _lastErrorDetail = null;
+      }
+
       return res;
     } catch (err) {
-      // ถ้าเป็นการ abort โดยตั้งใจ (เช่น user กดยกเลิกดาวน์โหลด) ให้ throw ออกทันที
-      // ห้าม retry candidate URL ตัวถัดไป เพราะนี่ไม่ใช่ network error
       if (err && err.name === 'AbortError') throw err;
       lastErr = err;
     }
   }
+
+  const elapsed = performance.now() - t0;
+  const errName = lastErr?.name || 'NetworkError';
+  const errorType = _classifyError(0, errName);
+
+  _pushApiHistory({
+    request_id:      null,
+    timestamp:       new Date().toLocaleString('th-TH', { hour12: false }),
+    endpoint:        path,
+    method:          (options?.method || 'GET').toUpperCase(),
+    status:          0,
+    response_time_ms: Math.round(elapsed),
+    error_type:      errorType,
+    retry_count:     _retryCount,
+  });
+
+  _lastErrorDetail = {
+    request_id:      null,
+    endpoint:        path,
+    method:          (options?.method || 'GET').toUpperCase(),
+    status:          0,
+    response_time_ms: Math.round(elapsed),
+    error_type:      errorType,
+    error_summary:   lastErr?.message || 'Network error',
+    friendly_message: _friendlyErrorMessage(errorType, lastErr?.message),
+    suggested_solution: _suggestSolution(errorType, path),
+    timestamp:       new Date().toLocaleString('th-TH', { hour12: false }),
+    retry_count:     _retryCount,
+  };
+
   throw lastErr || new Error('Unable to reach API');
+}
+
+// ── Retry helper ──────────────────────────────────────────────
+async function retryApiCall(fn, maxRetries = 3) {
+  let attempt = 0;
+  while (attempt < maxRetries) {
+    try {
+      return await fn(attempt);
+    } catch (err) {
+      attempt++;
+      if (attempt >= maxRetries) throw err;
+      if (err?.name === 'AbortError') throw err;
+      // exponential back-off: 1s, 2s, 4s
+      await new Promise(r => setTimeout(r, Math.min(1000 * Math.pow(2, attempt - 1), 8000)));
+    }
+  }
 }
 
 // ─── Export/Download progress bar (Fetch streaming) ───────
@@ -477,13 +617,21 @@ async function sendSQLToBackend(sqlFiles) {
   }
 
   try {
+    updateBadges(0, 0, 'connecting');
+    showStatus('uploadStatus', 'info', '⏳ กำลังเชื่อมต่อและประมวลผล...');
     const res = await fetchWithApiFallback('/convert', { method: 'POST', body: form });
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
+      const errorType = _classifyError(res.status, null);
+      const friendly = _friendlyErrorMessage(errorType, err.detail || `HTTP ${res.status}`);
+      _showApiError('uploadStatus', friendly, { canRetry: res.status >= 500 || res.status === 429, step: 'การส่งไฟล์ SQL' });
+      updateBadges(0, 0, 'error');
       throw new Error(err.detail || `HTTP ${res.status}`);
     }
 
+    updateBadges(0, 0, 'processing');
+    showStatus('uploadStatus', 'info', '⏳ กำลังประมวลผลผลลัพธ์...');
     const data = await res.json();
     sessionId = data.session_id;
 
@@ -515,7 +663,10 @@ async function sendSQLToBackend(sqlFiles) {
     );
 
   } catch (err) {
-    showStatus('uploadStatus', 'error', '❌ Backend: ' + err.message);
+    if (!_lastErrorDetail) {
+      showStatus('uploadStatus', 'error', '❌ Backend: ' + err.message);
+    }
+    // _showApiError may already be shown; อย่า double-show
   } finally {
     setLoading(false);
     onAllDone();
@@ -1892,7 +2043,18 @@ function updateBadges(tables, rows, status) {
   if (bt) bt.textContent = String(tables);
   if (br) br.textContent = String(rows.toLocaleString());
   const b = document.getElementById('badgeStatus');
-  if (b) { b.textContent = status; b.className = 'process-badge'; }
+  if (!b) return;
+  const statusMap = {
+    ready:      { label: 'READY',           cls: '' },
+    connecting: { label: 'กำลังเชื่อมต่อ', cls: 'badge-connecting' },
+    processing: { label: 'กำลังประมวลผล',  cls: 'badge-processing' },
+    mapped:     { label: 'สำเร็จ',          cls: 'badge-success' },
+    loaded:     { label: 'โหลดแล้ว',        cls: 'badge-success' },
+    error:      { label: 'ไม่สำเร็จ',       cls: 'badge-error' },
+  };
+  const s = statusMap[status] || { label: status.toUpperCase(), cls: '' };
+  b.textContent = s.label;
+  b.className = `process-badge ${s.cls}`;
 }
 
 function showStatus(id, type, msg) {
@@ -1903,6 +2065,188 @@ function showStatus(id, type, msg) {
   if (type === 'success') setTimeout(() => el.classList.remove('show'), 4000);
 }
 
+// ── Enhanced API Error display ────────────────────────────────
+function _showApiError(statusId, friendlyMsg, opts = {}) {
+  const { canRetry = false, step = '' } = opts;
+  const el = document.getElementById(statusId);
+  if (!el) return;
+
+  const now = new Date().toLocaleString('th-TH', { hour12: false });
+  const requestId = _lastErrorDetail?.request_id;
+  const responseTime = _lastErrorDetail?.response_time_ms;
+  const errorType = _lastErrorDetail?.error_type || 'ERROR';
+
+  let html = `<span class="api-err-msg">❌ ${friendlyMsg}</span>`;
+  html += `<span class="api-err-meta">`;
+  if (step) html += `<span class="api-err-step">ขั้นตอน: ${step}</span>`;
+  html += `<span class="api-err-type">${errorType}</span>`;
+  if (responseTime) html += `<span class="api-err-time">${responseTime}ms</span>`;
+  html += `<span class="api-err-ts">${now}</span>`;
+  html += `</span>`;
+  html += `<span class="api-err-actions">`;
+  if (requestId) {
+    html += `<button class="api-err-btn" onclick="copyRequestId('${requestId}')" title="Copy Request ID">📋 Copy ID</button>`;
+  }
+  html += `<button class="api-err-btn" onclick="showApiErrorDetail()" title="ดูรายละเอียด">🔍 ดูรายละเอียด</button>`;
+  if (canRetry && _lastApiRetryFn) {
+    html += `<button class="api-err-btn retry" onclick="_doApiRetry()" title="ลองใหม่">↻ ลองใหม่</button>`;
+  }
+  html += `</span>`;
+
+  el.innerHTML = html;
+  el.className = 'status-bar error show api-error-bar';
+}
+
+let _lastApiRetryFn = null;
+let _apiRetryCount  = 0;
+
+function _doApiRetry() {
+  if (!_lastApiRetryFn) return;
+  _apiRetryCount++;
+  showStatus(
+    document.querySelector('.api-error-bar')?.id || 'uploadStatus',
+    'info',
+    `⏳ กำลังลองใหม่... (ครั้งที่ ${_apiRetryCount})`
+  );
+  _lastApiRetryFn(_apiRetryCount);
+}
+
+function copyRequestId(rid) {
+  if (!rid) return;
+  navigator.clipboard?.writeText(rid).then(() => {
+    _showToast(`✅ Copied Request ID: ${rid}`);
+  }).catch(() => {
+    prompt('Copy Request ID:', rid);
+  });
+}
+
+function _showToast(msg, ms = 3000) {
+  let t = document.getElementById('_apiToast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = '_apiToast';
+    t.className = 'api-toast';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(t._tid);
+  t._tid = setTimeout(() => t.classList.remove('show'), ms);
+}
+
+function showApiErrorDetail() {
+  const d = _lastErrorDetail;
+  if (!d) { _showToast('ไม่มีข้อมูล error detail'); return; }
+
+  let m = document.getElementById('apiErrorDetailModal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'apiErrorDetailModal';
+    m.className = 'modal-backdrop api-detail-modal';
+    m.innerHTML = `
+      <div class="modal glass api-detail-inner">
+        <div class="modal-header">
+          <h2>API Error Detail</h2>
+          <button class="api-detail-close" onclick="document.getElementById('apiErrorDetailModal').style.display='none'">✕</button>
+        </div>
+        <div class="modal-body api-detail-body" id="apiDetailBody"></div>
+      </div>`;
+    document.body.appendChild(m);
+  }
+
+  const body = document.getElementById('apiDetailBody');
+  const rows = [
+    ['Request ID',       d.request_id || '—'],
+    ['Endpoint',         d.endpoint],
+    ['HTTP Method',      d.method],
+    ['Response Status',  d.status || '0 (Network Error)'],
+    ['Response Time',    d.response_time_ms != null ? `${d.response_time_ms} ms` : '—'],
+    ['Error Type',       d.error_type || '—'],
+    ['เวลาที่เกิดข้อผิดพลาด', d.timestamp],
+    ['Retry Count',      d.retry_count ?? 0],
+    ['Error Summary',    d.error_summary || '—'],
+    ['Friendly Message', d.friendly_message || '—'],
+    ['Suggested Solution', d.suggested_solution || '—'],
+  ];
+
+  body.innerHTML = rows.map(([k, v]) => `
+    <div class="api-detail-row">
+      <span class="api-detail-key">${k}</span>
+      <span class="api-detail-val">${v}</span>
+    </div>`).join('') +
+    (d.request_id ? `<button class="btn api-detail-copy-btn" onclick="copyRequestId('${d.request_id}')">📋 Copy Request ID</button>` : '');
+
+  m.style.display = 'flex';
+}
+
+// ── API History Panel ─────────────────────────────────────────
+function showApiHistoryPanel() {
+  let panel = document.getElementById('apiHistoryModal');
+  if (!panel) {
+    panel = document.createElement('div');
+    panel.id = 'apiHistoryModal';
+    panel.className = 'modal-backdrop api-history-modal';
+    panel.innerHTML = `
+      <div class="modal glass api-history-inner">
+        <div class="modal-header">
+          <h2>📡 API History (Session)</h2>
+          <div style="display:flex;gap:8px;align-items:center">
+            <button class="btn small" onclick="_clearApiHistory()">Clear</button>
+            <button class="api-detail-close" onclick="document.getElementById('apiHistoryModal').style.display='none'">✕</button>
+          </div>
+        </div>
+        <div class="modal-body">
+          <div class="api-history-legend">
+            <span class="ah-badge ok">2xx</span> สำเร็จ &nbsp;
+            <span class="ah-badge err">4xx/5xx</span> ผิดพลาด &nbsp;
+            <span class="ah-badge net">0</span> Network Error
+          </div>
+          <div class="api-history-table-wrap">
+            <table class="api-history-table" id="apiHistoryTable">
+              <thead><tr>
+                <th>เวลา</th><th>Method</th><th>Endpoint</th>
+                <th>Status</th><th>Time (ms)</th><th>Request ID</th>
+              </tr></thead>
+              <tbody id="apiHistoryTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(panel);
+  }
+
+  _renderApiHistory();
+  panel.style.display = 'flex';
+}
+
+function _renderApiHistory() {
+  const tbody = document.getElementById('apiHistoryTbody');
+  if (!tbody) return;
+  if (!_apiHistory.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text3);padding:24px">ยังไม่มีประวัติการเรียก API</td></tr>';
+    return;
+  }
+  tbody.innerHTML = _apiHistory.slice(0, 100).map(h => {
+    const cls = h.status === 0 ? 'ah-row-net' : h.status >= 400 ? 'ah-row-err' : 'ah-row-ok';
+    const statusTxt = h.status === 0 ? 'Network Error' : h.status;
+    const rid = h.request_id || '—';
+    const ridShort = rid.length > 8 ? rid.slice(0, 8) + '…' : rid;
+    return `<tr class="${cls}">
+      <td class="ah-ts">${h.timestamp}</td>
+      <td class="ah-method">${h.method}</td>
+      <td class="ah-ep" title="${h.endpoint}">${h.endpoint}</td>
+      <td class="ah-status">${statusTxt}</td>
+      <td class="ah-time">${h.response_time_ms}</td>
+      <td class="ah-rid" title="${rid}" onclick="if('${rid}'!=='—')copyRequestId('${rid}')" style="cursor:pointer">${ridShort}</td>
+    </tr>`;
+  }).join('');
+}
+
+function _clearApiHistory() {
+  _apiHistory.length = 0;
+  _renderApiHistory();
+}
+
 function setLoading(on) {
   document.getElementById('loadingBar').classList.toggle('active', on);
 }
@@ -1911,16 +2255,33 @@ async function checkHealth() {
   try {
     const res = await fetchWithApiFallback('/health');
     const payload = await res.json();
-    setBackendStatus(res.ok && String(payload.status || '').toLowerCase() === 'ok');
-  } catch { setBackendStatus(false); }
+    const ok = res.ok && String(payload.status || '').toLowerCase() === 'ok';
+    setBackendStatus(ok, res.status);
+    if (!ok && res.status === 503) {
+      showStatus('convertStatus', 'error', '⚠️ ระบบไม่พร้อมใช้งานชั่วคราว กรุณาลองใหม่ภายหลัง');
+    }
+  } catch (e) {
+    setBackendStatus(false, 0);
+  }
 }
 
-function setBackendStatus(ok) {
+function setBackendStatus(ok, status) {
   const dot = document.getElementById('backendDot');
   const lbl = document.getElementById('backendLabel');
   if (!dot||!lbl) return;
-  dot.className   = 'status-dot '+(ok?'online':'offline');
-  lbl.textContent = ok ? 'CONNECTED' : 'API Offline';
+  if (ok) {
+    dot.className   = 'status-dot online';
+    lbl.textContent = 'CONNECTED';
+  } else if (status === 503) {
+    dot.className   = 'status-dot offline';
+    lbl.textContent = 'ระบบกำลังปรับปรุง';
+  } else if (status === 0) {
+    dot.className   = 'status-dot offline';
+    lbl.textContent = 'Network Error';
+  } else {
+    dot.className   = 'status-dot offline';
+    lbl.textContent = 'API Offline';
+  }
 }
 
 /* ────────────────────────────────────────────────────────────

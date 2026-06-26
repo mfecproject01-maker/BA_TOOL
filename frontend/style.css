@@ -4709,3 +4709,229 @@ body { padding-bottom: 72px; }
   from { opacity: 0; transform: scale(0.95) translateX(-4px); }
   to { opacity: 1; transform: scale(1) translateX(0); }
 }
+/* ═══════════════════════════════════════════════════════════
+   API ERROR DIAGNOSTICS & ENHANCED LOGGING — Added styles
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── Enhanced API Error Bar ──────────────────────────────── */
+.status-bar.api-error-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  height: auto;
+  line-height: 1.5;
+}
+
+.api-err-msg {
+  font-weight: 600;
+  color: var(--danger);
+  font-size: 12.5px;
+}
+
+.api-err-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.api-err-step, .api-err-type, .api-err-time, .api-err-ts {
+  font-size: 10.5px;
+  font-family: var(--mono);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255,77,109,0.12);
+  color: var(--text2);
+}
+.api-err-type { color: var(--danger); font-weight: 600; }
+.api-err-time { color: var(--warn); }
+
+.api-err-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.api-err-btn {
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 5px;
+  border: 1px solid var(--border2);
+  background: var(--surface2);
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.api-err-btn:hover { background: var(--border); }
+.api-err-btn.retry { border-color: var(--accent); color: var(--accent); }
+.api-err-btn.retry:hover { background: var(--accent-dim); }
+
+/* ── Toast notification ──────────────────────────────────── */
+.api-toast {
+  position: fixed;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%) translateY(10px);
+  background: var(--surface2);
+  border: 1px solid var(--border2);
+  color: var(--text);
+  padding: 9px 18px;
+  border-radius: 8px;
+  font-size: 13px;
+  z-index: 99999;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s, transform 0.2s;
+  box-shadow: var(--shadow);
+}
+.api-toast.show {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateX(-50%) translateY(0);
+}
+
+/* ── API Error Detail Modal ──────────────────────────────── */
+.api-detail-modal {
+  z-index: 9900;
+}
+.api-detail-inner {
+  width: min(560px, 96vw);
+  max-height: 85vh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.api-detail-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+  padding: 4px 0 12px;
+}
+.api-detail-row {
+  display: flex;
+  gap: 12px;
+  padding: 7px 12px;
+  border-radius: 6px;
+  background: var(--surface2);
+  align-items: flex-start;
+}
+.api-detail-key {
+  font-size: 11px;
+  color: var(--text3);
+  font-family: var(--mono);
+  min-width: 150px;
+  flex-shrink: 0;
+}
+.api-detail-val {
+  font-size: 12.5px;
+  color: var(--text);
+  font-family: var(--mono);
+  word-break: break-all;
+}
+.api-detail-close {
+  background: none;
+  border: none;
+  color: var(--text2);
+  font-size: 18px;
+  cursor: pointer;
+  line-height: 1;
+  padding: 0 4px;
+}
+.api-detail-close:hover { color: var(--danger); }
+.api-detail-copy-btn {
+  margin-top: 12px;
+  align-self: flex-start;
+}
+
+/* ── API History Modal ───────────────────────────────────── */
+.api-history-modal {
+  z-index: 9900;
+}
+.api-history-inner {
+  width: min(860px, 97vw);
+  max-height: 85vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.api-history-legend {
+  font-size: 11.5px;
+  color: var(--text2);
+  margin-bottom: 10px;
+}
+.ah-badge {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  font-size: 10.5px;
+  font-family: var(--mono);
+  font-weight: 600;
+}
+.ah-badge.ok  { background: rgba(0,214,143,0.15); color: var(--accent); }
+.ah-badge.err { background: rgba(255,77,109,0.15); color: var(--danger); }
+.ah-badge.net { background: rgba(245,166,35,0.15); color: var(--warn); }
+
+.api-history-table-wrap {
+  overflow-y: auto;
+  flex: 1;
+}
+.api-history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-family: var(--mono);
+}
+.api-history-table th {
+  position: sticky;
+  top: 0;
+  background: var(--surface2);
+  padding: 8px 10px;
+  text-align: left;
+  color: var(--text3);
+  font-size: 11px;
+  letter-spacing: .05em;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+}
+.api-history-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+  vertical-align: middle;
+}
+.api-history-table tr:hover td { background: var(--surface2); }
+
+.ah-row-err td { color: var(--danger); }
+.ah-row-net td { color: var(--warn); }
+
+.ah-status { font-weight: 600; }
+.ah-ep { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ah-rid { color: var(--text3); font-size: 11px; }
+.ah-method { font-weight: 700; }
+
+/* ── Process Badge States ────────────────────────────────── */
+.process-badge.badge-connecting {
+  background: rgba(0, 148, 255, 0.18);
+  color: var(--accent2);
+  animation: badge-pulse 1.2s ease-in-out infinite;
+}
+.process-badge.badge-processing {
+  background: rgba(245, 166, 35, 0.18);
+  color: var(--warn);
+  animation: badge-pulse 0.9s ease-in-out infinite;
+}
+.process-badge.badge-success {
+  background: rgba(0, 214, 143, 0.18);
+  color: var(--accent);
+}
+.process-badge.badge-error {
+  background: rgba(255, 77, 109, 0.18);
+  color: var(--danger);
+}
+@keyframes badge-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.55; }
+}

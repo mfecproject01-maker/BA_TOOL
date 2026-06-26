@@ -2,11 +2,14 @@ import asyncio
 import json
 import logging
 import re
+import time
 import uuid
+from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta
 from functools import lru_cache
 from pathlib import Path
+from threading import Lock
 from typing import List
 import os
 
@@ -26,6 +29,81 @@ from backend.config.logger import logger, get_recent_logs, clear_logs
 from backend.config.db import init_db_pool, close_db_pool
 from backend.core.cache_store import result_cache
 from backend.exporter.excel_exporter import export_confluent_xlsx, export_table_xlsx, export_all_csv, export_table_csv
+
+# ── API History (in-session ring buffer) ─────────────────────
+_API_HISTORY_LIMIT = 200
+_api_history: deque = deque(maxlen=_API_HISTORY_LIMIT)
+_api_history_lock = Lock()
+
+
+def _record_api_call(
+    request_id: str,
+    endpoint: str,
+    method: str,
+    status: int,
+    response_time_ms: float,
+    error_type: str | None = None,
+    error_message: str | None = None,
+    retry_count: int = 0,
+    username: str | None = None,
+) -> None:
+    """บันทึก API call ลง in-memory history buffer"""
+    entry = {
+        "request_id":      request_id,
+        "timestamp":       datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "endpoint":        endpoint,
+        "method":          method,
+        "status":          status,
+        "response_time_ms": round(response_time_ms, 1),
+        "error_type":      error_type,
+        "error_message":   error_message,
+        "retry_count":     retry_count,
+        "username":        username,
+    }
+    with _api_history_lock:
+        _api_history.appendleft(entry)
+
+
+def _classify_error(status: int, exc: Exception | None) -> str:
+    """จำแนกประเภท error ให้เข้าใจง่าย"""
+    if exc is not None:
+        exc_name = type(exc).__name__
+        if exc_name in ("TimeoutError", "asyncio.TimeoutError"):
+            return "TIMEOUT"
+        if exc_name in ("ConnectionError", "ConnectionRefusedError"):
+            return "NETWORK_ERROR"
+    if status == 400:
+        return "BAD_REQUEST"
+    if status == 401:
+        return "UNAUTHORIZED"
+    if status == 403:
+        return "FORBIDDEN"
+    if status == 404:
+        return "NOT_FOUND"
+    if status == 422:
+        return "VALIDATION_ERROR"
+    if status == 429:
+        return "RATE_LIMITED"
+    if status == 503:
+        return "SERVICE_UNAVAILABLE"
+    if status >= 500:
+        return "SERVER_ERROR"
+    return "UNKNOWN_ERROR"
+
+
+def _friendly_error_message(error_type: str, status: int, detail: str) -> str:
+    """แปลง error ให้เป็นข้อความที่เข้าใจง่ายสำหรับผู้ใช้"""
+    messages = {
+        "TIMEOUT":            "การเชื่อมต่อใช้เวลานานเกินไป กรุณาลองใหม่อีกครั้ง",
+        "NETWORK_ERROR":      "ไม่สามารถเชื่อมต่อกับเซิร์ฟเวอร์ได้ กรุณาตรวจสอบการเชื่อมต่ออินเทอร์เน็ต",
+        "BAD_REQUEST":        f"ข้อมูลที่ส่งไม่ถูกต้อง: {detail}",
+        "NOT_FOUND":          "ไม่พบข้อมูลที่ร้องขอ (Session อาจหมดอายุ)",
+        "RATE_LIMITED":       "มีการเรียกใช้งานบ่อยเกินไป กรุณารอสักครู่แล้วลองใหม่",
+        "SERVICE_UNAVAILABLE":"ระบบกำลังปรับปรุงหรือไม่พร้อมใช้งานชั่วคราว กรุณาลองใหม่ภายหลัง",
+        "SERVER_ERROR":       "เกิดข้อผิดพลาดภายในเซิร์ฟเวอร์ ทีมงานได้รับแจ้งแล้ว",
+        "VALIDATION_ERROR":   "รูปแบบข้อมูลไม่ถูกต้อง กรุณาตรวจสอบข้อมูลที่ป้อน",
+    }
+    return messages.get(error_type, detail or "เกิดข้อผิดพลาดที่ไม่ทราบสาเหตุ")
 
 # Logging is configured once in backend.config.logger (imported below).
 # Do not call basicConfig here to avoid duplicate handlers.
@@ -139,6 +217,55 @@ app = FastAPI(lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+
+# ── Request-ID Middleware ──────────────────────────────────────
+@app.middleware("http")
+async def add_request_id_and_timing(request: Request, call_next):
+    """
+    เพิ่ม X-Request-ID header ทุก response และบันทึก response time
+    ไม่กระทบ business logic เดิม — แค่ inject header และ track timing
+    """
+    request_id = str(uuid.uuid4())
+    request.state.request_id = request_id
+    request.state.start_time = time.monotonic()
+
+    response = await call_next(request)
+
+    elapsed_ms = (time.monotonic() - request.state.start_time) * 1000
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Response-Time"] = f"{elapsed_ms:.1f}ms"
+
+    # บันทึกลง API history เฉพาะ endpoint ที่น่าสนใจ
+    path = request.url.path
+    _interesting = ("/convert", "/health", "/override", "/reparse", "/export", "/result", "/session", "/db-pairs", "/logs")
+    if any(path.startswith(p) for p in _interesting):
+        status = response.status_code
+        error_type = _classify_error(status, None) if status >= 400 else None
+        username_q = request.query_params.get("username")
+        _record_api_call(
+            request_id=request_id,
+            endpoint=path,
+            method=request.method,
+            status=status,
+            response_time_ms=elapsed_ms,
+            error_type=error_type,
+            username=username_q,
+        )
+        # Enhanced log สำหรับ request สำคัญ
+        if status >= 400:
+            logger.warning(
+                f"⚠️ API Error: endpoint={path} method={request.method} "
+                f"status={status} response_time={elapsed_ms:.1f}ms "
+                f"error_type={error_type} request_id={request_id}"
+            )
+        else:
+            logger.info(
+                f"📡 API: endpoint={path} method={request.method} "
+                f"status={status} response_time={elapsed_ms:.1f}ms request_id={request_id}"
+            )
+
+    return response
+
 # ── CORS ─────────────────────────────────────────────────
 _ORIGINS = os.getenv(
     "ALLOWED_ORIGINS",
@@ -171,7 +298,7 @@ app.add_middleware(
     # ต้อง expose ออกมาเอง ไม่งั้น browser จะ block ไม่ให้ fetch() เห็น header เหล่านี้ข้าม origin
     # Content-Length: ใช้คำนวณ % progress ตอนดาวน์โหลด/export
     # Content-Disposition: เผื่อ frontend อยากอ่านชื่อไฟล์จาก header ในอนาคต
-    expose_headers=["Content-Length", "Content-Disposition"],
+    expose_headers=["Content-Length", "Content-Disposition", "X-Request-ID", "X-Response-Time"],
 )
 
 app.add_middleware(MaintenanceMiddleware)
@@ -421,6 +548,26 @@ def get_logs():
 def delete_logs():
     """Clear in-memory backend processing logs."""
     clear_logs()
+    return {"status": "cleared"}
+
+
+@app.get("/api/history")
+def get_api_history(limit: int = Query(default=50, ge=1, le=200)):
+    """
+    คืนประวัติการเรียก API ใน session ปัจจุบัน (in-memory, ไม่ persist ข้าม restart)
+    ใช้สำหรับ Frontend API History panel
+    """
+    with _api_history_lock:
+        entries = list(_api_history)[:limit]
+    return {"history": entries, "total": len(entries)}
+
+
+@app.delete("/api/history")
+def clear_api_history():
+    """ล้างประวัติ API history"""
+    with _api_history_lock:
+        _api_history.clear()
+    logger.info("🗑 API history cleared")
     return {"status": "cleared"}
 
 @app.get("/db-pairs")
@@ -710,21 +857,35 @@ async def convert(
     dest_db: str | None = Form(default=None),
     username: str | None = Form(default=None),
 ):
+    request_id = getattr(request.state, "request_id", str(uuid.uuid4()))
+    start_time = getattr(request.state, "start_time", time.monotonic())
+    current_step = "validation"
+
     if len(files) > MAX_FILES:
+        elapsed = (time.monotonic() - start_time) * 1000
+        error_type = "BAD_REQUEST"
+        _record_api_call(request_id, "/convert", "POST", 400, elapsed, error_type,
+                         f"Too many files (max {MAX_FILES})", username=username)
+        logger.warning(
+            f"⚠️ Convert rejected: too many files request_id={request_id} "
+            f"error_type={error_type} response_time={elapsed:.1f}ms"
+        )
         raise HTTPException(400, f"Too many files (max {MAX_FILES})")
 
+    current_step = "mapping_load"
     active_mapping = _load_mapping(source_db, dest_db)
-    
+
     if username:
         logger.info(
             f"📥 Convert {len(files)} file(s) "
             f"[{source_db or 'default'} → {dest_db or 'default'}] "
-            f"by username={username}"
+            f"by username={username} request_id={request_id}"
         )
     else:
         logger.info(
             f"📥 Convert {len(files)} file(s) "
-            f"[{source_db or 'default'} → {dest_db or 'default'}]"
+            f"[{source_db or 'default'} → {dest_db or 'default'}] "
+            f"request_id={request_id}"
         )
 
     tables: dict = {}
@@ -737,19 +898,30 @@ async def convert(
 
     for file in files:
         filename = file.filename
+        current_step = f"read_file:{filename}"
         logger.info(f"📄 Processing file: {filename}")
         try:
             raw = await file.read()
             if len(raw) > MAX_FILE_SIZE:
+                elapsed = (time.monotonic() - start_time) * 1000
+                error_type = "FILE_TOO_LARGE"
+                _record_api_call(request_id, "/convert", "POST", 400, elapsed, error_type,
+                                 f"{filename} exceeds {MAX_FILE_SIZE_MB} MB", username=username)
                 raise HTTPException(400, f"{filename}: exceeds {MAX_FILE_SIZE_MB} MB limit")
             sql_text = _decode_sql_upload(raw, filename)
         except HTTPException:
             raise
         except Exception as e:
-            logger.error(f"❌ Error reading {filename}: {e}")
+            elapsed = (time.monotonic() - start_time) * 1000
+            error_type = "FILE_READ_ERROR"
+            logger.error(
+                f"❌ Error reading {filename}: {e} request_id={request_id} "
+                f"error_type={error_type} response_time={elapsed:.1f}ms"
+            )
             raise HTTPException(400, f"Cannot read file: {filename}")
 
         file_sql_text[filename] = sql_text
+        current_step = f"parse_sql:{filename}"
 
         file_parse_errors = _process_sql_file(
             filename, sql_text, active_mapping,
@@ -759,6 +931,7 @@ async def convert(
             parse_errors_by_file[filename] = file_parse_errors
 
     # Validate foreign keys
+    current_step = "fk_validation"
     fk_errors = validate_fk(tables)
 
     session_id = str(uuid.uuid4())
@@ -776,10 +949,15 @@ async def convert(
         "created_at":         datetime.now(),
     }
 
-    logger.info(f"✅ Session {session_id} created — {len(tables)} table(s)")
-    
+    elapsed = (time.monotonic() - start_time) * 1000
+    logger.info(
+        f"✅ Session {session_id} created — {len(tables)} table(s) "
+        f"request_id={request_id} response_time={elapsed:.1f}ms"
+    )
+
     return {
         "session_id":       session_id,
+        "request_id":       request_id,
         "file_count":       len(files),
         "source_db":        source_db,
         "dest_db":          dest_db,
@@ -789,6 +967,7 @@ async def convert(
         "byte_anomalies":   byte_anomalies,
         "duplicate_tables": duplicate_tables,
         "parse_errors":     parse_errors_by_file,
+        "response_time_ms": round(elapsed, 1),
     }
 
 
